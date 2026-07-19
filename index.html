@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book a 1:1 Session — bunnybethinking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg: #EAE7DC;
+    --surface: #F2F0E6;
+    --ink: #33402F;
+    --muted: #5C6353;
+    --clay: #B07A4E;
+    --sage: #7C8C6E;
+    --border: #C9C4B0;
+    --error: #A85C4A;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(176,122,78,0.06), transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(124,140,110,0.08), transparent 45%),
+      var(--bg);
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    display:flex;
+    align-items:flex-start;
+    justify-content:center;
+    padding: 40px 16px;
+  }
+
+  .noise{
+    position:fixed; inset:0; pointer-events:none; opacity:0.035; z-index:0;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .terminal{
+    position:relative; z-index:1;
+    width:100%; max-width: 620px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(51,64,47,0.06), 0 20px 40px -20px rgba(51,64,47,0.25);
+    overflow:hidden;
+  }
+
+  .titlebar{
+    display:flex; align-items:center; gap:8px;
+    padding: 12px 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .dot{ width:10px; height:10px; border-radius:50%; }
+  .dot.r{ background:#C9A08A; }
+  .dot.y{ background:#D4C48A; }
+  .dot.g{ background:#9BAE8A; }
+  .titlebar span{
+    margin-left:8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color: var(--muted);
+    letter-spacing:0.02em;
+  }
+
+  .body{ padding: 32px 32px 28px; }
+
+  .prompt{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color: var(--sage);
+    margin: 0 0 6px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .prompt .cursor{
+    display:inline-block; width:7px; height:14px; background: var(--clay);
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  h1{
+    font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em;
+    font-weight:600;
+  }
+  .sub{
+    font-family: 'Source Serif 4', serif;
+    font-style: italic;
+    color: var(--muted);
+    font-size: 15px;
+    margin: 0 0 24px;
+    line-height:1.5;
+  }
+
+  .meta-row{
+    display:flex; gap:10px; flex-wrap:wrap;
+    margin-bottom: 26px;
+  }
+  .chip{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11.5px;
+    padding: 6px 10px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    color: var(--muted);
+    background: var(--bg);
+  }
+  .chip b{ color: var(--ink); }
+
+  .step-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--clay);
+    text-transform:uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 18px;
+    display:block;
+  }
+
+  .field{ margin-bottom: 18px; }
+  label{
+    display:block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  label .req{ color: var(--clay); }
+  .hint{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 5px;
+  }
+
+  input[type=text], input[type=email], input[type=tel], select, textarea{
+    width:100%;
+    padding: 11px 12px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-family:'Space Grotesk', sans-serif;
+    font-size: 14.5px;
+    color: var(--ink);
+    outline:none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input::placeholder, textarea::placeholder{ color: #A6A290; }
+  input:focus, select:focus, textarea:focus{
+    border-color: var(--sage);
+    box-shadow: 0 0 0 3px rgba(124,140,110,0.15);
+  }
+  textarea{ resize: vertical; min-height: 74px; font-family:'Space Grotesk', sans-serif; }
+
+  .radio-grid{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  .radio-card{
+    border:1px solid var(--border);
+    border-radius:7px;
+    padding: 10px 12px;
+    cursor:pointer;
+    font-size: 13.5px;
+    background:#fff;
+    transition: border-color .15s, background .15s;
+    display:flex; align-items:center; gap:8px;
+  }
+  .radio-card input{ accent-color: var(--sage); width:auto; }
+  .radio-card:has(input:checked){
+    border-color: var(--sage);
+    background: rgba(124,140,110,0.08);
+  }
+
+  .cal-box{
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    padding: 14px;
+  }
+  .cal-header{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 10px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink);
+    font-weight:600;
+  }
+  .cal-nav{
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 5px; width: 26px; height: 26px;
+    cursor:pointer; color: var(--muted); font-family:'JetBrains Mono', monospace;
+  }
+  .cal-nav:hover{ border-color: var(--sage); color: var(--sage); }
+  .cal-nav:disabled{ opacity:0.3; cursor:not-allowed; }
+  .cal-grid{
+    display:grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+  }
+  .cal-dow{
+    text-align:center; font-family:'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--muted); padding-bottom: 4px;
+  }
+  .cal-day{
+    aspect-ratio: 1; display:flex; align-items:center; justify-content:center;
+    font-size: 12.5px; border-radius: 6px; cursor:default;
+    color: var(--muted); background: transparent;
+  }
+  .cal-day.empty{ visibility:hidden; }
+  .cal-day.available{
+    cursor:pointer; color: var(--ink); background: var(--bg);
+    border: 1px solid transparent;
+  }
+  .cal-day.available:hover{ border-color: var(--sage); }
+  .cal-day.selected{
+    background: var(--sage); color: #fff; font-weight:600;
+  }
+  .slots-wrap{
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);
+    display:none;
+  }
+  .slots-wrap.show{ display:block; }
+  .slots-label{
+    font-family:'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);
+    margin-bottom: 8px; display:block;
+  }
+  .slot-grid{ display:flex; flex-wrap:wrap; gap: 8px; }
+  .slot-pill{
+    padding: 7px 13px; border: 1px solid var(--border); border-radius: 20px;
+    font-family:'JetBrains Mono', monospace; font-size: 12px; cursor:pointer;
+    background:#fff; color: var(--ink);
+  }
+  .slot-pill:hover{ border-color: var(--sage); }
+  .slot-pill.selected{ background: var(--clay); border-color: var(--clay); color:#fff; }
+  .slot-confirm{
+    margin-top: 12px; font-family:'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--sage); display:none;
+  }
+  .slot-confirm.show{ display:block; }
+
+  .err{
+    color: var(--error);
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    margin-top: 5px;
+    display:none;
+  }
+  .field.invalid input, .field.invalid textarea{ border-color: var(--error); }
+  .field.invalid .err{ display:block; }
+
+  button.submit{
+    width:100%;
+    padding: 14px;
+    background: var(--ink);
+    color: var(--surface);
+    border:none;
+    border-radius: 8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13.5px;
+    font-weight:600;
+    letter-spacing: 0.03em;
+    cursor:pointer;
+    margin-top: 6px;
+    transition: background .15s, transform .05s;
+  }
+  button.submit:hover{ background: #232C1E; }
+  button.submit:active{ transform: scale(0.995); }
+
+  .footer-note{
+    text-align:center;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-top: 14px;
+  }
+
+  /* Step 2 - payment */
+  .pay-summary{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 22px;
+    font-size: 13.5px;
+  }
+  .pay-summary div{ display:flex; justify-content:space-between; padding: 4px 0; color: var(--muted); }
+  .pay-summary div b{ color: var(--ink); font-weight:600; }
+  .pay-summary .total{ border-top:1px dashed var(--border); margin-top:6px; padding-top:10px; }
+  .pay-summary .total span{ color: var(--clay); font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; }
+
+  .qr-box{
+    display:flex; flex-direction:column; align-items:center;
+    padding: 24px;
+    background:#fff;
+    border: 1px dashed var(--sage);
+    border-radius: 10px;
+    margin-bottom: 18px;
+  }
+  #qrcode{ padding: 8px; background:#fff; border-radius:6px; }
+  .upi-id-row{
+    display:flex; align-items:center; gap:8px;
+    margin-top:14px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
+  .copy-btn{
+    border:1px solid var(--sage);
+    background:transparent;
+    color: var(--sage);
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 5px;
+    cursor:pointer;
+  }
+  .copy-btn:hover{ background: var(--sage); color:#fff; }
+
+  .steps-list{
+    font-size: 13.5px;
+    color: var(--muted);
+    line-height: 1.9;
+    margin: 0 0 22px;
+    padding-left: 20px;
+  }
+  .steps-list b{ color: var(--ink); }
+
+  .confirm-btn{
+    width:100%;
+    padding: 14px;
+    background: var(--clay);
+    color: #fff;
+    border:none;
+    border-radius: 8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13.5px;
+    font-weight:600;
+    cursor:pointer;
+    margin-bottom:10px;
+  }
+  .confirm-btn:hover{ opacity:0.92; }
+
+  .ghost-btn{
+    width:100%;
+    padding: 12px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    cursor:pointer;
+  }
+
+  /* Step 3 - done */
+  .done{ text-align:center; padding: 20px 0 6px; }
+  .done .mark{
+    width:54px; height:54px; border-radius:50%;
+    background: var(--sage); color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 26px; margin: 0 auto 18px;
+  }
+
+  .hidden{ display:none; }
+
+  @media (max-width: 480px){
+    .body{ padding: 24px 20px 22px; }
+    .radio-grid{ grid-template-columns: 1fr; }
+    h1{ font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="noise"></div>
+
+<div class="terminal">
+  <div class="titlebar">
+    <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+    <span>bunnybethinking / session_intake.sh</span>
+  </div>
+
+  <div class="body">
+
+    <!-- STEP 1: INTAKE FORM -->
+    <div id="step1">
+      <p class="prompt">&gt; whoami --mentor<span class="cursor"></span></p>
+      <h1>Book a 1:1 Mentoring Session</h1>
+      <p class="sub">45 minutes, one on one — AI/ML careers, interview prep, or a learning path built around where you actually are.</p>
+
+      <div class="meta-row">
+        <div class="chip"><b>45 min</b> · single session</div>
+        <div class="chip"><b>₹1500</b> · pay by UPI</div>
+        <div class="chip"><b>Response</b> · within 24h</div>
+      </div>
+
+      <span class="step-label">[ 1 / 2 ] — Intake</span>
+
+      <form id="intakeForm" novalidate>
+        <div class="field" data-field="name">
+          <label>Full name <span class="req">*</span></label>
+          <input type="text" id="name" placeholder="e.g. Ananya Rao">
+          <div class="err">Please enter your name.</div>
+        </div>
+
+        <div class="field" data-field="email">
+          <label>Email <span class="req">*</span></label>
+          <input type="email" id="email" placeholder="you@email.com">
+          <div class="err">Please enter a valid email.</div>
+        </div>
+
+        <div class="field" data-field="whatsapp">
+          <label>WhatsApp number <span class="req">*</span></label>
+          <input type="tel" id="whatsapp" placeholder="+91 9XXXXXXXXX">
+          <div class="hint">Used only to confirm your slot after payment.</div>
+          <div class="err">Please enter a valid phone number.</div>
+        </div>
+
+        <div class="field" data-field="focus">
+          <label>What do you want help with? <span class="req">*</span></label>
+          <div class="radio-grid">
+            <label class="radio-card"><input type="radio" name="focus" value="Career transition into AI/ML"> Career transition</label>
+            <label class="radio-card"><input type="radio" name="focus" value="Interview prep"> Interview prep</label>
+            <label class="radio-card"><input type="radio" name="focus" value="Personalized learning path"> Learning path</label>
+            <label class="radio-card"><input type="radio" name="focus" value="Something else"> Something else</label>
+          </div>
+          <div class="err">Please pick one.</div>
+        </div>
+
+        <div class="field" data-field="context">
+          <label>Quick context — where are you right now?</label>
+          <textarea id="context" placeholder="Current role, background, what's tripping you up..."></textarea>
+        </div>
+
+        <div class="field" data-field="slot">
+          <label>Pick a day &amp; time <span class="req">*</span></label>
+          <div class="cal-box">
+            <div class="cal-header">
+              <button type="button" class="cal-nav" id="calPrev">&lsaquo;</button>
+              <span id="calMonthLabel">Month</span>
+              <button type="button" class="cal-nav" id="calNext">&rsaquo;</button>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+            <div class="slots-wrap" id="slotsWrap">
+              <span class="slots-label">Available times on <b id="slotsDayLabel"></b></span>
+              <div class="slot-grid" id="slotGrid"></div>
+            </div>
+            <div class="slot-confirm" id="slotConfirm">Selected: <b id="slotConfirmText"></b></div>
+          </div>
+          <div class="err">Please pick a day and time.</div>
+        </div>
+
+        <button type="submit" class="submit">&gt; proceed_to_payment()</button>
+        <p class="footer-note">no spam, no newsletter trap — just used to schedule your session</p>
+      </form>
+    </div>
+
+    <!-- STEP 2: PAYMENT -->
+    <div id="step2" class="hidden">
+      <p class="prompt">&gt; generate_invoice --session<span class="cursor"></span></p>
+      <h1>Complete Payment</h1>
+      <p class="sub">Scan the QR or pay via UPI ID, then confirm below.</p>
+
+      <span class="step-label">[ 2 / 2 ] — Payment</span>
+
+      <div class="pay-summary">
+        <div><span>Name</span> <b id="sumName">—</b></div>
+        <div><span>Focus</span> <b id="sumFocus">—</b></div>
+        <div><span>Preferred slot</span> <b id="sumSlot">—</b></div>
+        <div class="total"><span>Total due</span> <span>₹1500</span></div>
+      </div>
+
+      <div class="qr-box">
+        <div id="qrcode"></div>
+        <div class="upi-id-row">
+          <span id="upiIdText">pavan@upi</span>
+          <button class="copy-btn" id="copyUpiBtn">copy</button>
+        </div>
+      </div>
+
+      <ol class="steps-list">
+        <li>Scan the QR (or pay to the UPI ID above) — amount <b>₹1500</b>.</li>
+        <li>Take a screenshot of the successful payment.</li>
+        <li>Tap the button below to send your booking + screenshot on WhatsApp.</li>
+      </ol>
+
+      <button class="confirm-btn" id="whatsappBtn">&gt; send_booking_on_whatsapp()</button>
+      <button class="ghost-btn" id="backBtn">&larr; back to form</button>
+    </div>
+
+    <!-- STEP 3: DONE -->
+    <div id="step3" class="hidden">
+      <div class="done">
+        <div class="mark">✓</div>
+        <h1>Almost there</h1>
+        <p class="sub">WhatsApp should be open with your details pre-filled. Send the payment screenshot in the same chat and I'll confirm your slot within 24 hours.</p>
+      </div>
+      <button class="ghost-btn" id="restartBtn">&larr; book another session</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ---- EDIT THESE BEFORE PUBLISHING ----
+  const CONFIG = {
+    upiId: "pavan@upi",              // <-- replace with your real UPI ID
+    payeeName: "BunnyBeThinking",    // <-- name shown in UPI app
+    amount: 1500,
+    whatsappNumber: "919999999999",  // <-- replace with your WhatsApp number, country code, no + or spaces
+
+    // Which weekdays you take sessions on: 0=Sun, 1=Mon ... 6=Sat
+    availableWeekdays: [1, 2, 3, 4, 5],
+
+    // Time slots offered on any available day (edit freely)
+    timeSlots: ["7:00 PM", "7:45 PM", "8:30 PM"],
+
+    // Specific dates to block even if the weekday is normally available
+    // format: "YYYY-MM-DD"
+    blockedDates: [],
+
+    // How many days ahead to open for booking
+    bookingWindowDays: 30
+  };
+  // ---------------------------------------
+  // NOTE: this calendar reflects the rules above, not a live sync with your
+  // real calendar. If two people book the same slot, you'll need to catch
+  // that manually on WhatsApp and ask one of them to pick another time.
+  // ---------------------------------------
+
+  document.getElementById('upiIdText').textContent = CONFIG.upiId;
+
+  const step1 = document.getElementById('step1');
+  const step2 = document.getElementById('step2');
+  const step3 = document.getElementById('step3');
+  const form = document.getElementById('intakeForm');
+
+  let booking = {};
+  let selectedDate = null;   // Date object
+  let selectedTime = null;   // string
+  let calViewMonth;          // first-of-month Date currently shown
+
+  const DOW = ['S','M','T','W','T','F','S'];
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  function toDateKey(d){
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  function isDayAvailable(d){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + CONFIG.bookingWindowDays);
+    if(d < today || d > maxDate) return false;
+    if(!CONFIG.availableWeekdays.includes(d.getDay())) return false;
+    if(CONFIG.blockedDates.includes(toDateKey(d))) return false;
+    return true;
+  }
+
+  function renderCalendar(){
+    const grid = document.getElementById('calGrid');
+    grid.innerHTML = '';
+    DOW.forEach(d => {
+      const el = document.createElement('div');
+      el.className = 'cal-dow';
+      el.textContent = d;
+      grid.appendChild(el);
+    });
+
+    const year = calViewMonth.getFullYear();
+    const month = calViewMonth.getMonth();
+    document.getElementById('calMonthLabel').textContent = MONTH_NAMES[month] + ' ' + year;
+
+    const firstOfMonth = new Date(year, month, 1);
+    const startOffset = firstOfMonth.getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    for(let i=0; i<startOffset; i++){
+      const el = document.createElement('div');
+      el.className = 'cal-day empty';
+      grid.appendChild(el);
+    }
+
+    for(let day=1; day<=daysInMonth; day++){
+      const d = new Date(year, month, day);
+      const el = document.createElement('div');
+      el.textContent = day;
+      const available = isDayAvailable(d);
+      el.className = 'cal-day' + (available ? ' available' : '');
+      if(selectedDate && toDateKey(d) === toDateKey(selectedDate)){
+        el.classList.add('selected');
+      }
+      if(available){
+        el.addEventListener('click', () => selectDate(d));
+      }
+      grid.appendChild(el);
+    }
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    document.getElementById('calPrev').disabled = (calViewMonth.getFullYear() === today.getFullYear() && calViewMonth.getMonth() === today.getMonth());
+  }
+
+  function selectDate(d){
+    selectedDate = d;
+    selectedTime = null;
+    document.getElementById('slotConfirm').classList.remove('show');
+    renderCalendar();
+
+    const wrap = document.getElementById('slotsWrap');
+    wrap.classList.add('show');
+    document.getElementById('slotsDayLabel').textContent = d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
+
+    const slotGrid = document.getElementById('slotGrid');
+    slotGrid.innerHTML = '';
+    CONFIG.timeSlots.forEach(t => {
+      const pill = document.createElement('div');
+      pill.className = 'slot-pill';
+      pill.textContent = t;
+      pill.addEventListener('click', () => selectTime(t, pill));
+      slotGrid.appendChild(pill);
+    });
+  }
+
+  function selectTime(t, pillEl){
+    selectedTime = t;
+    document.querySelectorAll('.slot-pill').forEach(p => p.classList.remove('selected'));
+    pillEl.classList.add('selected');
+    const label = selectedDate.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' }) + ', ' + t;
+    document.getElementById('slotConfirmText').textContent = label;
+    document.getElementById('slotConfirm').classList.add('show');
+    form.querySelector('[data-field=slot]').classList.remove('invalid');
+  }
+
+  document.getElementById('calPrev').addEventListener('click', () => {
+    calViewMonth = new Date(calViewMonth.getFullYear(), calViewMonth.getMonth() - 1, 1);
+    renderCalendar();
+  });
+  document.getElementById('calNext').addEventListener('click', () => {
+    calViewMonth = new Date(calViewMonth.getFullYear(), calViewMonth.getMonth() + 1, 1);
+    renderCalendar();
+  });
+
+  (function initCalendar(){
+    const today = new Date();
+    calViewMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    renderCalendar();
+  })();
+
+  function setError(fieldEl, show){
+    fieldEl.classList.toggle('invalid', show);
+  }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    let valid = true;
+
+    const name = document.getElementById('name').value.trim();
+    const nameField = form.querySelector('[data-field=name]');
+    setError(nameField, !name); if(!name) valid = false;
+
+    const email = document.getElementById('email').value.trim();
+    const emailField = form.querySelector('[data-field=email]');
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    setError(emailField, !emailOk); if(!emailOk) valid = false;
+
+    const whatsapp = document.getElementById('whatsapp').value.trim();
+    const waField = form.querySelector('[data-field=whatsapp]');
+    const waOk = whatsapp.replace(/[^0-9]/g,'').length >= 10;
+    setError(waField, !waOk); if(!waOk) valid = false;
+
+    const focusEl = form.querySelector('input[name=focus]:checked');
+    const focusField = form.querySelector('[data-field=focus]');
+    setError(focusField, !focusEl); if(!focusEl) valid = false;
+
+    const slotField = form.querySelector('[data-field=slot]');
+    const slotOk = !!(selectedDate && selectedTime);
+    setError(slotField, !slotOk); if(!slotOk) valid = false;
+
+    if(!valid) return;
+
+    const slot = selectedDate.toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long' }) + ', ' + selectedTime;
+
+    booking = {
+      name, email, whatsapp,
+      focus: focusEl.value,
+      context: document.getElementById('context').value.trim(),
+      slot
+    };
+
+    document.getElementById('sumName').textContent = booking.name;
+    document.getElementById('sumFocus').textContent = booking.focus;
+    document.getElementById('sumSlot').textContent = booking.slot;
+
+    // build UPI deep link
+    const upiUri = `upi://pay?pa=${encodeURIComponent(CONFIG.upiId)}&pn=${encodeURIComponent(CONFIG.payeeName)}&am=${CONFIG.amount}&cu=INR&tn=${encodeURIComponent('1:1 Session - ' + booking.name)}`;
+
+    document.getElementById('qrcode').innerHTML = '';
+    new QRCode(document.getElementById('qrcode'), {
+      text: upiUri,
+      width: 180,
+      height: 180,
+      colorDark: "#33402F",
+      colorLight: "#ffffff"
+    });
+
+    step1.classList.add('hidden');
+    step2.classList.remove('hidden');
+    window.scrollTo(0,0);
+  });
+
+  document.getElementById('copyUpiBtn').addEventListener('click', function(){
+    navigator.clipboard.writeText(CONFIG.upiId);
+    this.textContent = 'copied!';
+    setTimeout(() => this.textContent = 'copy', 1500);
+  });
+
+  document.getElementById('backBtn').addEventListener('click', function(){
+    step2.classList.add('hidden');
+    step1.classList.remove('hidden');
+  });
+
+  document.getElementById('whatsappBtn').addEventListener('click', function(){
+    const msg = `New session booking:\n\nName: ${booking.name}\nEmail: ${booking.email}\nWhatsApp: ${booking.whatsapp}\nFocus: ${booking.focus}\nPreferred slot: ${booking.slot}\nContext: ${booking.context || '-'}\n\nAmount paid: Rs.1500 (screenshot attached below)`;
+    const url = `https://wa.me/${CONFIG.whatsappNumber}?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank');
+
+    step2.classList.add('hidden');
+    step3.classList.remove('hidden');
+    window.scrollTo(0,0);
+  });
+
+  document.getElementById('restartBtn').addEventListener('click', function(){
+    form.reset();
+    document.querySelectorAll('.field').forEach(f => f.classList.remove('invalid'));
+    selectedDate = null;
+    selectedTime = null;
+    document.getElementById('slotsWrap').classList.remove('show');
+    document.getElementById('slotConfirm').classList.remove('show');
+    renderCalendar();
+    step3.classList.add('hidden');
+    step1.classList.remove('hidden');
+    window.scrollTo(0,0);
+  });
+</script>
+
+</body>
+</html>
