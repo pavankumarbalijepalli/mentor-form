@@ -6,7 +6,7 @@
 <title>Book a 1:1 Session — bunnybethinking</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.4.4/qrcode.min.js"></script>
 <style>
   :root{
     --bg: #EAE7DC;
@@ -477,6 +477,7 @@
 
       <div class="qr-box">
         <div id="qrcode"></div>
+        <a id="upiDeepLink" href="#" style="margin-top:10px; font-family:'JetBrains Mono', monospace; font-size:11.5px; color: var(--sage); text-decoration:underline;">Or tap to pay directly (on phone)</a>
         <div class="upi-id-row">
           <span id="upiIdText">bunnybethinking@ybl</span>
           <button class="copy-btn" id="copyUpiBtn">copy</button>
@@ -695,16 +696,26 @@
     document.getElementById('sumFocus').textContent = booking.focus;
     document.getElementById('sumSlot').textContent = booking.slot;
 
-    // build UPI deep link
-    const upiUri = `upi://pay?pa=${encodeURIComponent(CONFIG.upiId)}&pn=${encodeURIComponent(CONFIG.payeeName)}&am=${CONFIG.amount}&cu=INR&tn=${encodeURIComponent('1:1 Session - ' + booking.name)}`;
+    // build UPI deep link — amount needs 2 decimals, note must be plain alphanumeric,
+    // mode/purpose are standard NPCI params some apps expect even though optional
+    const safeNote = ('Session ' + booking.name).replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 25);
+    const upiUri = `upi://pay?pa=${encodeURIComponent(CONFIG.upiId)}&pn=${encodeURIComponent(CONFIG.payeeName)}&am=${CONFIG.amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(safeNote)}`;
+    document.getElementById('upiDeepLink').href = upiUri;
+    console.log('UPI URI:', upiUri); // check this in browser dev tools if payment still fails
 
     document.getElementById('qrcode').innerHTML = '';
-    new QRCode(document.getElementById('qrcode'), {
-      text: upiUri,
-      width: 180,
-      height: 180,
-      colorDark: "#33402F",
-      colorLight: "#ffffff"
+    const canvas = document.createElement('canvas');
+    document.getElementById('qrcode').appendChild(canvas);
+    QRCode.toCanvas(canvas, upiUri, {
+      width: 200,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#33402F', light: '#ffffff' }
+    }, function(error){
+      if(error){
+        console.error('QR generation failed:', error);
+        document.getElementById('qrcode').innerHTML = '<span style="font-family:monospace; font-size:11px; color:#A85C4A;">QR failed to generate — use the UPI ID below instead.</span>';
+      }
     });
 
     step1.classList.add('hidden');
