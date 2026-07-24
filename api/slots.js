@@ -1,5 +1,5 @@
 // Vercel Serverless Function — GET /api/slots?date=YYYY-MM-DD
-// Returns which times are already booked for that date.
+// Reads from a single "slots" hash: field "date|time" -> "true"
 
 async function redis(command) {
   const res = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
@@ -24,8 +24,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    const result = await redis(["SMEMBERS", `booked:${date}`]);
-    return res.status(200).json({ booked: result.result || [] });
+    const result = await redis(["HGETALL", "slots"]);
+    const flat = result.result || []; // [field1, value1, field2, value2, ...]
+
+    const booked = [];
+    for (let i = 0; i < flat.length; i += 2) {
+      const field = flat[i]; // "2026-07-29|7:00 PM"
+      const [fieldDate, time] = field.split("|");
+      if (fieldDate === date) booked.push(time);
+    }
+
+    return res.status(200).json({ booked });
   } catch (err) {
     console.error("Redis error:", err);
     return res.status(500).json({ error: "could not fetch availability" });

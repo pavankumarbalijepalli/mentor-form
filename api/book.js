@@ -1,6 +1,9 @@
 // Vercel Serverless Function — POST /api/book
 // Body: { date, time, name, email, whatsapp, focus, context }
-// Atomically claims the slot, then stores the full booking record.
+//
+// Schema:
+//   slots    (hash) -> field "date|time" = "true"        (availability)
+//   bookings (hash) -> field <booking-id> = JSON string   (booking data)
 
 async function redis(command) {
   const res = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
@@ -25,10 +28,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    // SADD returns 1 if newly added, 0 if it already existed — atomic,
-    // so two simultaneous bookings for the same slot can't both succeed.
-    const addResult = await redis(["SADD", `booked:${date}`, time]);
-    if (addResult.result === 0) {
+    // HSETNX returns 1 if the field was newly set, 0 if it already existed —
+    // atomic, so two simultaneous bookings for the same slot can't both win.
+    const field = `${date}|${time}`;
+    const claim = await redis(["HSETNX", "slots", field, "true"]);
+    if (claim.result === 0) {
       return res.status(409).json({ error: "slot_taken" });
     }
 
@@ -40,8 +44,7 @@ export default async function handler(req, res) {
       createdAt: new Date().toISOString(),
     });
 
-    await redis(["SET", `booking:${id}`, record]);
-    await redis(["LPUSH", "bookings:all", id]);
+    await redis(["HSET", "bookings", id, record]);
 
     return res.status(200).json({ success: true, id });
   } catch (err) {
