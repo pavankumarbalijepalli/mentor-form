@@ -391,10 +391,10 @@
     <div id="step1">
       <p class="prompt">&gt; whoami --mentor<span class="cursor"></span></p>
       <h1>Book a 1:1 Mentoring Session</h1>
-      <p class="sub">45 minutes, one on one — AI/ML careers, interview prep, or a learning path built around where you actually are.</p>
+      <p class="sub">60 minutes, one on one — AI/ML careers, interview prep, or a learning path built around where you actually are.</p>
 
       <div class="meta-row">
-        <div class="chip"><b>45 min</b> · single session</div>
+        <div class="chip"><b>60 min</b> · single session</div>
         <div class="chip"><b>₹1500</b> · pay by UPI</div>
         <div class="chip"><b>Response</b> · within 24h</div>
       </div>
@@ -511,15 +511,15 @@
   // ---- EDIT THESE BEFORE PUBLISHING ----
   const CONFIG = {
     upiId: "bunnyistaken@ybl",              // <-- replace with your real UPI ID
-    payeeName: "Balijepalli V N S S Pavan Kumar",    // <-- name shown in UPI app
+    payeeName: "Balijepalli V N S S Pavan",    // <-- name shown in UPI app
     amount: 1500,
     whatsappNumber: "917673977636",  // <-- replace with your WhatsApp number, country code, no + or spaces
 
     // Which weekdays you take sessions on: 0=Sun, 1=Mon ... 6=Sat
-    availableWeekdays: [0, 6],
+    availableWeekdays: [1, 2, 3, 4, 5, 6],
 
     // Time slots offered on any available day (edit freely)
-    timeSlots: ["7:00 AM", "8:00 AM", "2:00 PM", "3:00 PM"],
+    timeSlots: ["8:00 AM", "9:00 PM"],
 
     // Specific dates to block even if the weekday is normally available
     // format: "YYYY-MM-DD"
@@ -527,6 +527,8 @@
 
     // How many days ahead to open for booking
     bookingWindowDays: 30
+    // No separate API URL needed — the frontend and /api functions
+    // are deployed together on Vercel, so calls just use relative paths.
   };
   // ---------------------------------------
   // NOTE: this calendar reflects the rules above, not a live sync with your
@@ -605,7 +607,7 @@
     document.getElementById('calPrev').disabled = (calViewMonth.getFullYear() === today.getFullYear() && calViewMonth.getMonth() === today.getMonth());
   }
 
-  function selectDate(d){
+  async function selectDate(d){
     selectedDate = d;
     selectedTime = null;
     document.getElementById('slotConfirm').classList.remove('show');
@@ -616,12 +618,30 @@
     document.getElementById('slotsDayLabel').textContent = d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
 
     const slotGrid = document.getElementById('slotGrid');
+    slotGrid.innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace; font-size:11px; color:var(--muted);">checking availability...</span>';
+
+    let bookedTimes = [];
+    try{
+      const res = await fetch(`/api/slots?date=${toDateKey(d)}`);
+      const data = await res.json();
+      bookedTimes = data.booked || [];
+    } catch(err){
+      console.error('Could not fetch live availability, showing all slots as open:', err);
+    }
+
     slotGrid.innerHTML = '';
     CONFIG.timeSlots.forEach(t => {
+      const taken = bookedTimes.includes(t);
       const pill = document.createElement('div');
-      pill.className = 'slot-pill';
-      pill.textContent = t;
-      pill.addEventListener('click', () => selectTime(t, pill));
+      pill.className = 'slot-pill' + (taken ? ' taken' : '');
+      pill.textContent = taken ? `${t} (booked)` : t;
+      if(taken){
+        pill.style.opacity = '0.4';
+        pill.style.cursor = 'not-allowed';
+        pill.title = 'Already booked — pick another time';
+      } else {
+        pill.addEventListener('click', () => selectTime(t, pill));
+      }
       slotGrid.appendChild(pill);
     });
   }
@@ -734,7 +754,48 @@
     step1.classList.remove('hidden');
   });
 
-  document.getElementById('whatsappBtn').addEventListener('click', function(){
+  document.getElementById('whatsappBtn').addEventListener('click', async function(){
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = '> saving_booking()...';
+
+    try{
+      const res = await fetch(`/api/book`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: toDateKey(selectedDate),
+          time: selectedTime,
+          name: booking.name,
+          email: booking.email,
+          whatsapp: booking.whatsapp,
+          focus: booking.focus,
+          context: booking.context
+        })
+      });
+
+      if(res.status === 409){
+        alert('Sorry — someone just booked that exact slot. Please pick a different time.');
+        btn.disabled = false;
+        btn.textContent = '> send_booking_on_whatsapp()';
+        step2.classList.add('hidden');
+        step1.classList.remove('hidden');
+        selectDate(selectedDate); // refresh slot availability for that day
+        return;
+      }
+      if(!res.ok){
+        throw new Error('Booking save failed with status ' + res.status);
+      }
+    } catch(err){
+      console.error('Could not save booking to database:', err);
+      const proceed = confirm("Couldn't save your booking to the database (connection issue). Continue to WhatsApp anyway so I can note it manually?");
+      if(!proceed){
+        btn.disabled = false;
+        btn.textContent = '> send_booking_on_whatsapp()';
+        return;
+      }
+    }
+
     const msg = `New session booking:\n\nName: ${booking.name}\nEmail: ${booking.email}\nWhatsApp: ${booking.whatsapp}\nFocus: ${booking.focus}\nPreferred slot: ${booking.slot}\nContext: ${booking.context || '-'}\n\nAmount paid: Rs.1500 (screenshot attached below)`;
     const url = `https://wa.me/${CONFIG.whatsappNumber}?text=${encodeURIComponent(msg)}`;
     window.open(url, '_blank');
