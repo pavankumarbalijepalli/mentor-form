@@ -1,42 +1,27 @@
-// Vercel Serverless Function — GET /api/slots?date=YYYY-MM-DD
-// Reads from a single "slots" hash: field "date|time" -> "true"
-
-async function redis(command) {
-  const res = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(command),
-  });
-  return res.json();
-}
+// GET /api/slots?date=YYYY-MM-DD
+// -> { date, slots: [{ time, status }] }, status = open | booked | held | closed
+import { CONFIG } from "./_config.js";
+import { isDateKey, isDayOpen, isSlotOpen } from "../shared/dates.js";
+import { redis, requireMethod, send, serverError, slotField, slotState } from "./_lib.js";
 
 export default async function handler(req, res) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "method not allowed" });
-  }
+  if (!requireMethod(req, res, "GET")) return;
 
-  const { date } = req.query;
-  if (!date) {
-    return res.status(400).json({ error: "date is required" });
-  }
+  const date = req.query?.date;
+  if (!isDateKey(date)) return send(res, 400, { error: "invalid_date" });
+
+  const now = Date.now();
+  if (!isDayOpen(date, now, CONFIG)) return send(res, 200, { date, slots: [] });
 
   try {
-    const result = await redis(["HGETALL", "slots"]);
-    const flat = result.result || []; // [field1, value1, field2, value2, ...]
-
-    const booked = [];
-    for (let i = 0; i < flat.length; i += 2) {
-      const field = flat[i]; // "2026-07-29|7:00 PM"
-      const [fieldDate, time] = field.split("|");
-      if (fieldDate === date) booked.push(time);
-    }
-
-    return res.status(200).json({ booked });
+    const values = await redis(["HMGET", "slots", ...CONFIG.timeSlots.map((t) => slotField(date, t))]);
+    const slots = CONFIG.timeSlots.map((time, i) => {
+      const state = slotState(values[i], now);
+      if (state !== "free") return { time, status: state };
+      return { time, status: isSlotOpen(date, time, now, CONFIG) ? "open" : "closed" };
+    });
+    return send(res, 200, { date, slots });
   } catch (err) {
-    console.error("Redis error:", err);
-    return res.status(500).json({ error: "could not fetch availability" });
+    return serverError(res, err);
   }
 }

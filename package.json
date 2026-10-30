@@ -1,0 +1,9 @@
+{
+  "name": "mentor-form",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "test": "node --test"
+  }
+}
