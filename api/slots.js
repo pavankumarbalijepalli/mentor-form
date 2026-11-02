@@ -1,7 +1,7 @@
 // GET /api/slots?date=YYYY-MM-DD
 // -> { date, slots: [{ time, status }] }, status = open | booked | held | closed
 import { CONFIG } from "./_config.js";
-import { isDateKey, isDayOpen, isSlotOpen } from "../shared/dates.js";
+import { isDateKey, isDayOpen, isSlotOpen } from "../public/js/dates.js";
 import { redis, requireMethod, send, serverError, slotField, slotState } from "./_lib.js";
 
 export default async function handler(req, res) {

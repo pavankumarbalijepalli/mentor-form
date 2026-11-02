@@ -16,10 +16,11 @@ import { CONFIG } from "./_config.js";
 // ---------- Redis (Upstash REST) ----------
 
 export async function redis(command) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // The Vercel Upstash integration names these KV_REST_API_*; a hand-made database uses UPSTASH_*.
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (!url || !token) {
-    throw new Error("UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN are not set");
+    throw new Error("Redis is not configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN");
   }
   const res = await fetch(url, {
     method: "POST",

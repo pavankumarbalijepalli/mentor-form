@@ -1,4 +1,4 @@
-import { addDays, dayHasOpenSlot, todayKey } from "/shared/dates.js";
+import { addDays, dayHasOpenSlot, todayKey } from "/js/dates.js";
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
@@ -72,7 +72,7 @@ function showRetry(el, text, onRetry) {
 
 const note = (text) => {
   const s = document.createElement("span");
-  s.className = "muted-mono";
+  s.className = "note";
   s.textContent = text;
   return s;
 };
@@ -95,7 +95,7 @@ async function boot() {
     cfg = r.data;
   } catch (err) {
     console.error(err);
-    showRetry($("loadError"), "Couldn't load the booking calendar. Check your connection.", boot);
+    showRetry($("loadError"), "I couldn't load the calendar. Check your connection.", boot);
     return;
   }
   applyConfig();
@@ -200,7 +200,7 @@ async function loadSlots() {
   const key = st.date;
   const req = ++st.slotReq;
   const grid = $("slotGrid");
-  grid.replaceChildren(note("checking availability..."));
+  grid.replaceChildren(note("Checking availability…"));
 
   let slots;
   try {
@@ -211,8 +211,8 @@ async function loadSlots() {
     console.error(err);
     if (req !== st.slotReq) return;
     const box = document.createElement("span");
-    box.className = "muted-mono";
-    showRetry(box, "Couldn't check availability.", loadSlots);
+    box.className = "note";
+    showRetry(box, "I couldn't check availability.", loadSlots);
     grid.replaceChildren(box);
     return;
   }
@@ -299,7 +299,7 @@ form.addEventListener("submit", async (e) => {
 
   const btn = $("submitBtn");
   btn.disabled = true;
-  btn.textContent = "> reserving_slot()...";
+  btn.textContent = "Reserving your slot…";
   try {
     const r = await api("/api/book", { date: st.date, time: st.time, ...v, website: $("website").value });
     if (r.ok) {
@@ -309,10 +309,10 @@ form.addEventListener("submit", async (e) => {
     }
   } catch (err) {
     console.error(err);
-    showMessage($("formError"), "Couldn't reach the server. Check your connection and try again.");
+    showMessage($("formError"), "I couldn't reach the server. Check your connection and try again.");
   } finally {
     btn.disabled = false;
-    btn.textContent = "> proceed_to_payment()";
+    btn.textContent = "Continue to payment";
   }
 });
 
@@ -355,7 +355,7 @@ function renderPayment() {
   const h = st.hold;
   $("sumName").textContent = h.booking.name;
   $("sumFocus").textContent = h.booking.focus;
-  $("sumSlot").textContent = slotLabel(h.date, h.time).replace(/ IST$/, "");
+  $("sumSlot").textContent = `${dayLabel(h.date, SHORT_DAY)}, ${h.time}`;
   $("sumRef").textContent = h.ref;
   $("payError").hidden = true;
 
@@ -378,7 +378,7 @@ function renderPayment() {
   };
   if (window.QRCode) {
     window.QRCode.toCanvas(canvas, upi, {
-      width: 200, margin: 2, errorCorrectionLevel: "M", color: { dark: "#33402F", light: "#ffffff" },
+      width: 200, margin: 2, errorCorrectionLevel: "M", color: { dark: "#10243F", light: "#F3F6F9" },
     }, (error) => { if (error) { console.error(error); failed(); } });
   } else {
     failed();
@@ -398,7 +398,7 @@ function startTimer() {
     } else {
       clearInterval(st.timer);
       el.classList.add("expired");
-      el.textContent = "Reservation expired. If you've already paid, tap the button below and I'll check. Otherwise go back and pick your slot again.";
+      el.textContent = "Reservation expired. If you've already paid, tap the button below and I'll check. Otherwise, go back and pick your slot again.";
     }
   };
   tick();
@@ -430,7 +430,7 @@ $("confirmBtn").addEventListener("click", async () => {
   const err = $("payError");
   err.hidden = true;
   btn.disabled = true;
-  btn.textContent = "> saving_booking()...";
+  btn.textContent = "Saving your booking…";
 
   // These people have already paid, so every failure points them at WhatsApp.
   const wa = (extra) => ({ href: waUrl(extra), text: "Message me on WhatsApp" });
@@ -448,11 +448,11 @@ $("confirmBtn").addEventListener("click", async () => {
     }
   } catch (e) {
     console.error(e);
-    showMessage(err, "Couldn't save your booking right now. Tap the button again to retry, or send your details on WhatsApp so I can note it manually.",
+    showMessage(err, "I couldn't save your booking just now. Tap the button to retry, or send your details on WhatsApp and I'll note it manually.",
       wa("NOTE: the website could not save this booking, please check it manually."));
   } finally {
     btn.disabled = false;
-    btn.textContent = "> i_have_paid()";
+    btn.textContent = "I've paid, lock my slot";
   }
 });
 

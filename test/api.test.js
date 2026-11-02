@@ -2,12 +2,12 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { CONFIG } from "../api/_config.js";
-import { isSlotOpen, addDays, todayKey } from "../shared/dates.js";
+import { isSlotOpen, addDays, todayKey } from "../public/js/dates.js";
 import { call, hasRedis, startRedis } from "../test-helpers/redis.js";
 
 const skip = hasRedis ? false : "redis-server not installed";
 
-let db, book, confirm, release, slots, admin, config;
+let db, book, confirm, release, slots, admin, config, health;
 before(async () => {
   if (skip) return;
   db = await startRedis();
@@ -17,6 +17,7 @@ before(async () => {
   ({ default: slots } = await import("../api/slots.js"));
   ({ default: admin } = await import("../api/admin.js"));
   ({ default: config } = await import("../api/config.js"));
+  ({ default: health } = await import("../api/health.js"));
 });
 after(() => db?.stop());
 
@@ -250,4 +251,30 @@ test("a Redis outage is a 500, not a crash or a silent success", { skip }, async
     process.env.UPSTASH_REDIS_REST_URL = saved;
   }
   assert.equal(await status(openSlots[27]), "open");
+});
+
+test("health: 200 when Redis answers, 503 when it doesn't", { skip }, async () => {
+  assert.deepEqual((await call(health)).body, { ok: true });
+  const saved = process.env.UPSTASH_REDIS_REST_URL;
+  process.env.UPSTASH_REDIS_REST_URL = "http://127.0.0.1:1";
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await call(health)).status, 503);
+  } finally {
+    console.error = origError;
+    process.env.UPSTASH_REDIS_REST_URL = saved;
+  }
+});
+
+test("redis config: accepts the Vercel integration's KV_REST_API_* names", { skip }, async () => {
+  const url = process.env.UPSTASH_REDIS_REST_URL, token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  process.env.KV_REST_API_URL = url; process.env.KV_REST_API_TOKEN = token;
+  try {
+    assert.equal((await call(health)).status, 200);
+  } finally {
+    delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+    process.env.UPSTASH_REDIS_REST_URL = url; process.env.UPSTASH_REDIS_REST_TOKEN = token;
+  }
 });

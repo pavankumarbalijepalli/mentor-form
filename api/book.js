@@ -2,7 +2,7 @@
 // Body: { date, time, name, email, whatsapp, focus, context }
 // -> { success, id, ref, expiresAt } | 400 | 409 slot_taken | 429
 import { CONFIG } from "./_config.js";
-import { isSlotOpen } from "../shared/dates.js";
+import { isSlotOpen } from "../public/js/dates.js";
 import {
   claimSlot, clientIp, isRateLimited, jsonBody, refOf, requireMethod, send, serverError, validateBooking,
 } from "./_lib.js";
