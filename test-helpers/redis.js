@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
+import { Readable } from "node:stream";
 
 export const hasRedis = spawnSync("redis-server", ["--version"]).status === 0;
 
@@ -80,8 +81,9 @@ export async function startRedis() {
   };
 }
 
-// Minimal stand-ins for Vercel's req/res.
-export function call(handler, { method = "GET", body, query = {}, headers = {} } = {}) {
+// Minimal stand-ins for Vercel's req/res. Pass `raw` to deliver the body as an
+// unparsed stream (what the webhook needs), otherwise `body` is already-parsed JSON.
+export function call(handler, { method = "GET", body, raw, query = {}, headers = {} } = {}) {
   return new Promise((resolve) => {
     const res = {
       headers: {},
@@ -89,6 +91,7 @@ export function call(handler, { method = "GET", body, query = {}, headers = {} }
       status(code) { this.code = code; return this; },
       json(payload) { resolve({ status: this.code, body: payload, headers: this.headers }); },
     };
-    Promise.resolve(handler({ method, body, query, headers }, res)).catch((e) => resolve({ status: 500, error: e }));
+    const req = raw === undefined ? { method, body, query, headers } : Object.assign(Readable.from([Buffer.from(raw)]), { method, query, headers });
+    Promise.resolve(handler(req, res)).catch((e) => resolve({ status: 500, error: e }));
   });
 }

@@ -212,28 +212,7 @@ input:focus, textarea:focus { outline: 2px solid var(--cobalt); outline-offset: 
 .summary .total { margin-top: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--border); }
 .summary .total dd { color: var(--cobalt); font-size: 24px; line-height: 30px; font-weight: 700; }
 
-.qr-box {
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
-  margin: 0 0 var(--space-3); padding: var(--space-3);
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
-}
-#qrcode canvas { display: block; border-radius: var(--radius-sm); }
-.deeplink { font-weight: 600; }
 .term { background: var(--ink); color: var(--bg); border-radius: var(--radius-sm); }
-.upi-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1) var(--space-2); max-width: 100%; padding: var(--space-1) var(--space-2); }
-.upi-row span { white-space: nowrap; }
-.copy-btn {
-  flex: none; padding: var(--space-1) var(--space-2);
-  background: var(--mist); color: var(--ink);
-  border: 0; border-radius: var(--radius-sm);
-  font: 600 13px/18px var(--font-sans); letter-spacing: 0.02em; cursor: pointer;
-}
-.copy-btn:hover { background: var(--bg); }
-.copy-btn:focus-visible { outline-color: var(--bg); }
-.qr-fail { font-weight: 600; }
-
-.steps-list { margin: 0 0 var(--space-3); padding-left: var(--space-3); }
-.steps-list li { margin-bottom: var(--space-1); }
 
 /* ---------- done ---------- */
 
@@ -242,6 +221,7 @@ input:focus, textarea:focus { outline: 2px solid var(--cobalt); outline-offset: 
 .mark-bg { fill: var(--cobalt); }
 .mark-tick { fill: none; stroke: var(--bg); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
 .done .lead { max-width: 46ch; margin-left: auto; margin-right: auto; }
+.done-slot { margin: 0 0 var(--space-2); font-size: 24px; line-height: 30px; font-weight: 600; }
 .ref-box { display: inline-block; margin: 0 0 var(--space-3); padding: var(--space-1) var(--space-2); }
 .ref-box b { margin-left: var(--space-1); letter-spacing: 0.04em; }
 
@@ -253,7 +233,6 @@ input:focus, textarea:focus { outline: 2px solid var(--cobalt); outline-offset: 
   .display { font-size: 40px; line-height: 44px; }
   .heading { font-size: 28px; line-height: 34px; }
   .radio-grid { grid-template-columns: 1fr; }
-  .qr-box { padding: var(--space-2); }
 }
 
 @media (prefers-reduced-motion: reduce) {

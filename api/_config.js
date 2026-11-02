@@ -1,4 +1,4 @@
-// Single source of truth for the schedule and payment details. The API enforces
+// Single source of truth for the schedule and price (payment keys live in env vars). The API enforces
 // these rules; the browser fetches the public ones from GET /api/config.
 // Edit here and redeploy — nothing in this file is secret.
 
@@ -8,10 +8,12 @@ export const CONFIG = {
   utcOffsetMinutes: 330,
 
   sessionMinutes: 60,
-  amount: 1500,
-  upiId: "bunnyistaken@ybl",
-  payeeName: "Balijepalli V N S S Pavan",
-  // WhatsApp number with country code, digits only
+  // Price in rupees. The Razorpay order is created for this amount on the server;
+  // the browser never sends an amount.
+  amount: 899,
+  currency: "INR",
+  businessName: "bunnybethinking",
+  // WhatsApp number with country code, digits only (shown as a "message me" link)
   whatsappNumber: "917673977636",
 
   // 0=Sun ... 6=Sat
@@ -46,8 +48,8 @@ export const publicConfig = () => ({
   utcOffsetMinutes: CONFIG.utcOffsetMinutes,
   sessionMinutes: CONFIG.sessionMinutes,
   amount: CONFIG.amount,
-  upiId: CONFIG.upiId,
-  payeeName: CONFIG.payeeName,
+  currency: CONFIG.currency,
+  businessName: CONFIG.businessName,
   whatsappNumber: CONFIG.whatsappNumber,
   availableWeekdays: CONFIG.availableWeekdays,
   timeSlots: CONFIG.timeSlots,
@@ -57,3 +59,5 @@ export const publicConfig = () => ({
   holdMinutes: CONFIG.holdMinutes,
   focusOptions: CONFIG.focusOptions,
 });
+
+export const amountPaise = () => Math.round(CONFIG.amount * 100);

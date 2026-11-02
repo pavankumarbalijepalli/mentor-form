@@ -3,7 +3,7 @@ import { addDays, dayHasOpenSlot, todayKey } from "/js/dates.js";
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
 
-const STORE_KEY = "mentorBooking:v1";
+const STORE_KEY = "mentorBooking:v2";
 const STORE_MAX_AGE_MS = 24 * 3600 * 1000;
 const DOW = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -16,9 +16,10 @@ const st = {
   view: null,     // { y, m } month shown in the calendar (m is 0-based)
   date: null,     // "YYYY-MM-DD" in the mentor's timezone
   time: null,     // "8:00 AM"
-  hold: null,     // { id, ref, expiresAt, booking, date, time } once a slot is reserved
+  hold: null,     // { id, ref, expiresAt, booking, date, time, keyId, order, paid? } once a slot is reserved
   slotReq: 0,     // guards against out-of-order availability responses
   timer: null,
+  checkout: null, // promise for the Razorpay script
 };
 
 const form = $("intakeForm");
@@ -29,6 +30,7 @@ const form = $("intakeForm");
 // visitor's own timezone can never shift the day.
 const dayLabel = (key, opts) =>
   new Date(`${key}T00:00:00Z`).toLocaleDateString("en-IN", { timeZone: "UTC", ...opts });
+const nb = (time) => time.replace(" ", "\u00a0"); // keep "8:00 AM" on one line
 const slotLabel = (date, time) => `${dayLabel(date, LONG_DAY)}, ${time} IST`;
 
 async function api(path, body) {
@@ -100,15 +102,14 @@ async function boot() {
   }
   applyConfig();
   initCalendar();
-  restore();
+  await restore();
 }
 
 function applyConfig() {
   $("chipDuration").textContent = cfg.sessionMinutes;
   $("chipPrice").textContent = cfg.amount;
   $("sumTotal").textContent = cfg.amount;
-  $("stepAmount").textContent = cfg.amount;
-  $("upiIdText").textContent = cfg.upiId;
+  $("payBtn").textContent = `Pay ₹${cfg.amount}`;
 
   const grid = $("focusOptions");
   grid.replaceChildren();
@@ -247,7 +248,7 @@ function selectTime(time) {
     p.classList.toggle("selected", on);
     p.setAttribute("aria-pressed", String(on));
   }
-  $("slotConfirmText").textContent = `${dayLabel(st.date, SHORT_DAY)}, ${time} IST`;
+  $("slotConfirmText").textContent = `${dayLabel(st.date, SHORT_DAY)}, ${nb(time)} IST`;
   $("slotConfirm").hidden = false;
   setInvalid("slot", false);
 }
@@ -274,6 +275,7 @@ function validate() {
     whatsapp: !/^\+?[0-9][0-9 ()-]*$/.test(v.whatsapp) || digits.length < 10 || digits.length > 15,
     focus: !v.focus,
     slot: !(st.date && st.time),
+    promo: false,
   };
   for (const [name, isBad] of Object.entries(bad)) setInvalid(name, isBad);
 
@@ -301,8 +303,11 @@ form.addEventListener("submit", async (e) => {
   btn.disabled = true;
   btn.textContent = "Reserving your slot…";
   try {
-    const r = await api("/api/book", { date: st.date, time: st.time, ...v, website: $("website").value });
-    if (r.ok) {
+    const r = await api("/api/book", { date: st.date, time: st.time, ...v, promoCode: $("promo").value.trim(), website: $("website").value });
+    if (r.ok && r.data.free) {
+      st.hold = { id: r.data.id, ref: r.data.ref, booking: v, date: r.data.date, time: r.data.time, free: true };
+      finishBooked(r.data);
+    } else if (r.ok) {
       startPayment(r.data, v);
     } else {
       bookError(r);
@@ -328,6 +333,12 @@ function bookError({ status, data }) {
   } else if (data.error === "invalid_field") {
     setInvalid(data.field, true);
     showMessage(err, "Please check the highlighted field.");
+  } else if (data.error === "invalid_promo") {
+    setInvalid("promo", true);
+    $("promo").focus();
+    showMessage(err, "Please check your promo code, or clear it to pay in full.");
+  } else if (data.error === "payment_unavailable") {
+    showMessage(err, "Online payment isn't available right now. Please try again in a bit, or", { href: `https://wa.me/${cfg.whatsappNumber}`, text: "message me on WhatsApp." });
   } else if (status === 429) {
     showMessage(err, "Too many attempts. Please wait a few minutes and try again.");
   } else {
@@ -345,6 +356,8 @@ function startPayment(data, booking) {
     booking,
     date: st.date,
     time: st.time,
+    keyId: data.keyId,
+    order: data.order,
   };
   persist();
   renderPayment();
@@ -355,42 +368,34 @@ function renderPayment() {
   const h = st.hold;
   $("sumName").textContent = h.booking.name;
   $("sumFocus").textContent = h.booking.focus;
-  $("sumSlot").textContent = `${dayLabel(h.date, SHORT_DAY)}, ${h.time}`;
+  $("sumSlot").textContent = `${dayLabel(h.date, SHORT_DAY)}, ${nb(h.time)}`;
   $("sumRef").textContent = h.ref;
-  $("payError").hidden = true;
-
-  // amount needs 2 decimals; the note carries the reference so payments can be matched to bookings
-  const upi = `upi://pay?pa=${encodeURIComponent(cfg.upiId)}&pn=${encodeURIComponent(cfg.payeeName)}`
-    + `&am=${Number(cfg.amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Mentor ${h.ref}`)}`;
-  $("upiDeepLink").href = upi;
-
-  const qr = $("qrcode");
-  qr.replaceChildren();
-  const canvas = document.createElement("canvas");
-  canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", `UPI QR code for ₹${cfg.amount} to ${cfg.upiId}`);
-  qr.append(canvas);
-  const failed = () => {
-    const s = document.createElement("span");
-    s.className = "qr-fail";
-    s.textContent = "QR failed to generate — use the UPI ID below instead.";
-    qr.replaceChildren(s);
-  };
-  if (window.QRCode) {
-    window.QRCode.toCanvas(canvas, upi, {
-      width: 200, margin: 2, errorCorrectionLevel: "M", color: { dark: "#10243F", light: "#F3F6F9" },
-    }, (error) => { if (error) { console.error(error); failed(); } });
-  } else {
-    failed();
-  }
-
+  hidePayError();
+  setPayButton();
   startTimer();
+  preloadCheckout();
 }
+
+// Once a payment has been made the button only retries confirming it, so nobody pays twice.
+function setPayButton(busyText) {
+  const btn = $("payBtn");
+  const expired = st.hold.expiresAt <= Date.now() && !st.hold.paid;
+  btn.disabled = Boolean(busyText) || expired;
+  btn.textContent = busyText || (st.hold.paid ? "Confirm my payment" : `Pay ₹${cfg.amount}`);
+}
+
+const hidePayError = () => { $("payError").hidden = true; };
 
 function startTimer() {
   clearInterval(st.timer);
   const el = $("holdTimer");
   const tick = () => {
+    if (st.hold.paid) {
+      clearInterval(st.timer);
+      el.classList.remove("expired");
+      el.textContent = "Payment received. Confirming your booking…";
+      return;
+    }
     const left = st.hold.expiresAt - Date.now();
     if (left > 0) {
       el.classList.remove("expired");
@@ -398,71 +403,127 @@ function startTimer() {
     } else {
       clearInterval(st.timer);
       el.classList.add("expired");
-      el.textContent = "Reservation expired. If you've already paid, tap the button below and I'll check. Otherwise, go back and pick your slot again.";
+      el.textContent = "Your reservation expired. Go back and pick your slot again.";
+      if ($("payBtn").textContent.startsWith("Pay")) setPayButton();
     }
   };
   tick();
   st.timer = setInterval(tick, 1000);
 }
 
+// ---- Razorpay Checkout ----
+
+function loadCheckout() {
+  if (window.Razorpay) return Promise.resolve();
+  st.checkout ||= new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = resolve;
+    script.onerror = () => { st.checkout = null; script.remove(); reject(new Error("checkout.js failed to load")); };
+    document.head.append(script);
+  });
+  return st.checkout;
+}
+const preloadCheckout = () => { loadCheckout().catch(() => {}); };
+
+$("payBtn").addEventListener("click", async () => {
+  const h = st.hold;
+  if (!h) return;
+  hidePayError();
+  if (h.paid) return confirmPayment(); // already paid: just retry the confirmation
+
+  setPayButton("Opening secure checkout…");
+  try {
+    await loadCheckout();
+  } catch (err) {
+    console.error(err);
+    showMessage($("payError"), "I couldn't load the payment window. Check your connection and try again.");
+    setPayButton();
+    return;
+  }
+
+  const rzp = new window.Razorpay({
+    key: h.keyId,
+    order_id: h.order.id,
+    amount: h.order.amount,
+    currency: h.order.currency,
+    name: cfg.businessName,
+    description: `1:1 session · ${dayLabel(h.date, SHORT_DAY)}, ${h.time} IST`,
+    prefill: { name: h.booking.name, email: h.booking.email, contact: h.booking.whatsapp },
+    notes: { ref: h.ref },
+    theme: { color: "#1F4E8C" },
+    modal: { ondismiss: () => setPayButton() },
+    handler: (response) => {
+      h.paid = { paymentId: response.razorpay_payment_id, signature: response.razorpay_signature };
+      persist();
+      confirmPayment();
+    },
+  });
+  rzp.on("payment.failed", (response) => {
+    showMessage($("payError"), `${response.error?.description || "The payment didn't go through."} You can try again.`);
+    setPayButton();
+  });
+  rzp.open();
+});
+
+// Tell our server the payment happened; it verifies the signature and asks Razorpay itself.
+async function confirmPayment() {
+  const h = st.hold;
+  hidePayError();
+  setPayButton("Confirming your payment…");
+  startTimer();
+  const help = (extra) => ({ href: waUrl(`PROBLEM: ${extra} Payment id: ${h.paid.paymentId}`), text: "Message me on WhatsApp." });
+  try {
+    const r = await api("/api/verify", { id: h.id, razorpay_payment_id: h.paid.paymentId, razorpay_signature: h.paid.signature });
+    if (r.ok) return finishBooked({ ...r.data, ref: h.ref });
+
+    if (r.status === 409 && r.data.error === "slot_taken") {
+      clearStored();
+      showMessage($("payError"), r.data.status === "refunded"
+        ? "Your payment arrived after your reservation expired, and someone else booked that time. I've refunded you in full (it takes 5 to 7 working days to show up). Please go back and pick another time."
+        : "Your payment arrived after your reservation expired, and someone else booked that time. You'll be refunded in full. If you don't see it in a few days,",
+        r.data.status === "refunded" ? null : help("My payment arrived after my slot expired and I need the refund."));
+      st.hold.paid = null;
+      setPayButton("Slot unavailable");
+      return;
+    }
+    if (r.status === 402) {
+      showMessage($("payError"), "Razorpay hasn't confirmed this payment yet. Wait a moment and tap the button again. Please don't pay twice.");
+    } else if (r.status === 409 || r.status === 404 || r.status === 400) {
+      showMessage($("payError"), "I couldn't match your payment to this booking. Please don't pay again;", help("My payment could not be matched to my booking."));
+    } else {
+      throw new Error(`verify ${r.status}`);
+    }
+  } catch (err) {
+    console.error(err);
+    showMessage($("payError"), "Your payment went through, but I couldn't confirm the booking just now. Please don't pay again. Tap the button to retry, or",
+      help("I paid but the website could not confirm my booking."));
+  }
+  setPayButton();
+}
+
 function waUrl(extra) {
   const h = st.hold;
-  const b = h.booking;
   const lines = [
-    "New session booking:", "",
+    "Hi! About my 1:1 session booking:", "",
     `Ref: ${h.ref}`,
-    `Name: ${b.name}`,
-    `Email: ${b.email}`,
-    `WhatsApp: ${b.whatsapp}`,
-    `Focus: ${b.focus}`,
+    `Name: ${h.booking.name}`,
     `Slot: ${slotLabel(h.date, h.time)}`,
-    `Context: ${b.context || "-"}`, "",
-    `Amount paid: Rs.${cfg.amount} (screenshot attached below)`,
   ];
   if (extra) lines.push("", extra);
   return `https://wa.me/${cfg.whatsappNumber}?text=${encodeURIComponent(lines.join("\n"))}`;
 }
 
-$("confirmBtn").addEventListener("click", async () => {
+function finishBooked({ ref, date, time }) {
   const h = st.hold;
-  if (!h) return;
-  const btn = $("confirmBtn");
-  const err = $("payError");
-  err.hidden = true;
-  btn.disabled = true;
-  btn.textContent = "Saving your booking…";
-
-  // These people have already paid, so every failure points them at WhatsApp.
-  const wa = (extra) => ({ href: waUrl(extra), text: "Message me on WhatsApp" });
-  try {
-    const r = await api("/api/confirm", { id: h.id });
-    if (r.ok) return finish();
-    if (r.status === 409) {
-      showMessage(err, "Your reservation expired and that time was booked by someone else. If you've already paid, message me with your screenshot and we'll sort out a new time or a refund.",
-        wa("PROBLEM: my reservation expired and the slot was taken, but I have paid."));
-    } else if (r.status === 404 || r.status === 410) {
-      showMessage(err, "This booking is no longer active. If you've already paid, message me with your screenshot and we'll sort it out.",
-        wa("PROBLEM: my booking was not active, but I have paid."));
-    } else {
-      throw new Error(`confirm ${r.status}`);
-    }
-  } catch (e) {
-    console.error(e);
-    showMessage(err, "I couldn't save your booking just now. Tap the button to retry, or send your details on WhatsApp and I'll note it manually.",
-      wa("NOTE: the website could not save this booking, please check it manually."));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "I've paid, lock my slot";
-  }
-});
-
-function finish() {
-  const url = waUrl();
   clearInterval(st.timer);
   clearStored();
-  $("doneRef").textContent = st.hold.ref;
-  $("waLink").href = url;
-  window.open(url, "_blank", "noopener"); // may be blocked after an async call; the link on the page always works
+  $("doneLead").textContent = h.free
+    ? "Your session is booked, no payment needed. I'll message you on WhatsApp before we meet."
+    : "Payment received and your session is booked. I'll message you on WhatsApp before we meet.";
+  $("doneSlot").textContent = `${dayLabel(date || h.date, LONG_DAY)}, ${nb(time || h.time)} IST`;
+  $("doneRef").textContent = ref || h.ref;
+  $("waLink").href = waUrl();
   show("step3");
 }
 
@@ -470,22 +531,6 @@ $("backBtn").addEventListener("click", () => {
   releaseHold();
   show("step1");
   if (st.date) selectDate(st.date); // refresh availability; they re-pick a time
-});
-
-$("copyUpiBtn").addEventListener("click", async () => {
-  const btn = $("copyUpiBtn");
-  try {
-    await navigator.clipboard.writeText(cfg.upiId);
-    btn.textContent = "copied!";
-  } catch {
-    const range = document.createRange();
-    range.selectNodeContents($("upiIdText"));
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    btn.textContent = "press copy";
-  }
-  setTimeout(() => { btn.textContent = "copy"; }, 1500);
 });
 
 $("restartBtn").addEventListener("click", () => {
@@ -505,7 +550,7 @@ function releaseHold() {
   st.hold = null;
   clearInterval(st.timer);
   clearStored();
-  if (h) {
+  if (h && !h.paid && !h.free) {
     fetch("/api/release", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: h.id }), keepalive: true,
@@ -513,7 +558,7 @@ function releaseHold() {
   }
 }
 
-// ---------- survive a reload while the user is in their UPI app ----------
+// ---------- survive a reload while the customer is in their UPI/bank app ----------
 
 function persist() {
   try { sessionStorage.setItem(STORE_KEY, JSON.stringify({ hold: st.hold, savedAt: Date.now() })); } catch { /* storage unavailable */ }
@@ -522,13 +567,31 @@ function clearStored() {
   try { sessionStorage.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
 }
 
-function restore() {
+async function restore() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem(STORE_KEY)); } catch { /* none */ }
   const h = saved?.hold;
-  if (!h?.id || Date.now() - saved.savedAt > STORE_MAX_AGE_MS) return clearStored();
+  if (!h?.id || !h.order || Date.now() - saved.savedAt > STORE_MAX_AGE_MS) return clearStored();
+
+  // Ask the server what became of it (it also notices a payment we never heard about).
+  let current = null;
+  try {
+    const r = await api(`/api/status?id=${encodeURIComponent(h.id)}`);
+    if (r.ok) current = r.data.status;
+    else if (r.status === 404) current = "gone";
+  } catch { /* offline: fall back to what we remember */ }
 
   st.hold = h;
+  if (current === "confirmed") return finishBooked({ ref: h.ref, date: h.date, time: h.time });
+  if (current && current !== "held") {
+    st.hold = null;
+    clearStored();
+    showMessage($("formError"), current === "refunded" || current === "refund_due"
+      ? "Your earlier payment couldn't be used because that time was taken. It's being refunded. Please pick another time."
+      : "Your earlier reservation is no longer active. Please pick a time again.");
+    return;
+  }
+
   st.date = h.date;
   st.time = h.time;
   st.view = { y: Number(h.date.slice(0, 4)), m: Number(h.date.slice(5, 7)) - 1 };
@@ -540,6 +603,7 @@ function restore() {
   renderCalendar();
   renderPayment();
   show("step2");
+  if (h.paid) confirmPayment(); // they paid but we never got the confirmation through: retry it
 }
 
 boot();

@@ -15,7 +15,6 @@
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@600&family=Lora:ital,wght@1,400&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/tokens.css">
 <link rel="stylesheet" href="/styles.css">
-<script src="/vendor/qrcode.min.js" defer></script>
 <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -38,7 +37,7 @@
 
       <ul class="tags" aria-label="Session details">
         <li class="tag"><span id="chipDuration">60</span> min, one session</li>
-        <li class="tag">₹<span id="chipPrice">1500</span> by UPI</li>
+        <li class="tag">₹<span id="chipPrice">899</span>, pay online</li>
         <li class="tag">Times in IST (UTC+5:30)</li>
         <li class="tag">I reply within 24h</li>
       </ul>
@@ -63,7 +62,7 @@
         <div class="field" data-field="whatsapp">
           <label for="whatsapp">WhatsApp number</label>
           <input type="tel" id="whatsapp" name="whatsapp" placeholder="+91 9XXXXXXXXX" autocomplete="tel" inputmode="tel" maxlength="25" required aria-describedby="hint-whatsapp err-whatsapp">
-          <div class="caption hint" id="hint-whatsapp">Only used to confirm your slot after payment.</div>
+          <div class="caption hint" id="hint-whatsapp">Only used to reach you about your session.</div>
           <div class="err" id="err-whatsapp">Please enter a valid phone number, with country code if you're outside India.</div>
         </div>
 
@@ -96,6 +95,12 @@
           <div class="err" id="err-slot">Please pick a day and a time.</div>
         </div>
 
+        <div class="field" data-field="promo">
+          <label for="promo">Promo code <span class="optional">(optional)</span></label>
+          <input type="text" id="promo" name="promo" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" aria-describedby="err-promo">
+          <div class="err" id="err-promo">That code isn't valid, has expired, or has already been used.</div>
+        </div>
+
         <!-- honeypot: leave empty -->
         <div class="hp" aria-hidden="true">
           <label for="website">Website</label>
@@ -113,7 +118,7 @@
     <section id="step2" aria-labelledby="title2" hidden>
       <p class="caption handle">bunnybethinking</p>
       <h1 id="title2" class="heading" tabindex="-1">Pay and lock your slot</h1>
-      <p class="lead">Scan the QR or pay to the UPI ID, then tell me you've paid.</p>
+      <p class="lead">Pay securely with UPI, card or netbanking. Your slot is held while you pay.</p>
 
       <p class="caption step-label">Step 2 of 2 · Payment</p>
 
@@ -124,28 +129,14 @@
         <div><dt>Focus</dt><dd id="sumFocus">—</dd></div>
         <div><dt>Slot (IST)</dt><dd id="sumSlot">—</dd></div>
         <div><dt>Reference</dt><dd class="code" id="sumRef">—</dd></div>
-        <div class="total"><dt>Total due</dt><dd>₹<span id="sumTotal">1500</span></dd></div>
+        <div class="total"><dt>Total due</dt><dd>₹<span id="sumTotal">899</span></dd></div>
       </dl>
-
-      <div class="qr-box">
-        <div id="qrcode"></div>
-        <a id="upiDeepLink" class="deeplink" href="#">On your phone? Tap to pay directly</a>
-        <div class="term upi-row">
-          <span id="upiIdText"></span>
-          <button type="button" class="copy-btn" id="copyUpiBtn">copy</button>
-        </div>
-      </div>
-
-      <ol class="steps-list">
-        <li>Scan the QR, or pay to the UPI ID: <b>₹<span id="stepAmount">1500</span></b>. Keep the reference in the payment note.</li>
-        <li>Take a screenshot of the successful payment.</li>
-        <li>Tap the button below to lock in your slot, then send me the screenshot on WhatsApp.</li>
-      </ol>
 
       <p class="notice" id="payError" role="alert" hidden></p>
 
-      <button type="button" class="btn btn-primary" id="confirmBtn">I've paid, lock my slot</button>
+      <button type="button" class="btn btn-primary" id="payBtn">Pay ₹899</button>
       <button type="button" class="btn btn-ghost" id="backBtn">Back to my details</button>
+      <p class="caption footer-note">Payments are handled by Razorpay. I never see your card or UPI details.</p>
     </section>
 
     <!-- STEP 3: DONE -->
@@ -155,11 +146,12 @@
           <circle cx="28" cy="28" r="28" class="mark-bg"/>
           <path d="M16 29l8 8 16-17" class="mark-tick"/>
         </svg>
-        <h1 id="title3" class="heading" tabindex="-1">Almost there</h1>
-        <p class="lead">Your slot is reserved. Send me the payment screenshot on WhatsApp and I'll confirm your booking within 24 hours.</p>
+        <h1 id="title3" class="heading" tabindex="-1">You're booked</h1>
+        <p class="lead" id="doneLead"></p>
+        <p class="done-slot" id="doneSlot"></p>
         <p class="term ref-box">Reference <b id="doneRef"></b></p>
       </div>
-      <a class="btn btn-primary" id="waLink" href="#" target="_blank" rel="noopener">Open WhatsApp</a>
+      <a class="btn btn-primary" id="waLink" href="#" target="_blank" rel="noopener">Message me on WhatsApp</a>
       <button type="button" class="btn btn-ghost" id="restartBtn">Book another session</button>
     </section>
 
