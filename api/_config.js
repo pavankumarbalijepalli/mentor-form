@@ -7,7 +7,7 @@ export const CONFIG = {
   timezone: "Asia/Kolkata",
   utcOffsetMinutes: 330,
 
-  sessionMinutes: 60,
+  sessionMinutes: 30,
   // Price in rupees. The Razorpay order is created for this amount on the server;
   // the browser never sends an amount.
   amount: 899,
@@ -17,10 +17,10 @@ export const CONFIG = {
   whatsappNumber: "917673977636",
 
   // 0=Sun ... 6=Sat
-  availableWeekdays: [1, 2, 3, 4, 5, 6],
+  availableWeekdays: [1, 2, 3, 4, 5],
 
   // Offered on every available day, written exactly "H:MM AM|PM" (used as a DB key)
-  timeSlots: ["8:00 AM", "9:00 PM"],
+  timeSlots: ["7:00 PM", "7:30 PM", "8:00 PM"],
 
   // Dates to close even though the weekday is normally open: "YYYY-MM-DD"
   blockedDates: [],

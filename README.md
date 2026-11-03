@@ -44,7 +44,7 @@ Going back or letting the hold run out releases the slot. States: `held → conf
 
 ## Changing your schedule or price
 
-Everything is in [`api/_config.js`](api/_config.js): weekdays, time slots, blocked dates (holidays), booking window, minimum notice, price (`amount`, in rupees), your WhatsApp number and the "what do you want help with" options. Edit it and redeploy. The page and the API both read it, so they can't disagree. Time slots must look exactly like `"8:00 AM"` / `"9:00 PM"`.
+Everything is in [`api/_config.js`](api/_config.js): weekdays, time slots, blocked dates (holidays), booking window, minimum notice, price (`amount`, in rupees), your WhatsApp number and the "what do you want help with" options. Edit it and redeploy. The page and the API both read it, so they can't disagree. Time slots must look exactly like `"7:00 PM"` / `"7:30 PM"`. Closed a day (holiday, travel)? Add it to `blockedDates` as `"YYYY-MM-DD"`.
 
 ## Promo codes (free sessions)
 

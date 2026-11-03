@@ -107,6 +107,7 @@ async function boot() {
 
 function applyConfig() {
   $("chipDuration").textContent = cfg.sessionMinutes;
+  $("leadMinutes").textContent = cfg.sessionMinutes;
   $("chipPrice").textContent = cfg.amount;
   $("sumTotal").textContent = cfg.amount;
   $("payBtn").textContent = `Pay ₹${cfg.amount}`;
