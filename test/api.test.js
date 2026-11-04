@@ -1,27 +1,26 @@
 // Integration tests: the real handlers + Lua scripts against a real redis-server,
-// with a local mock standing in for Razorpay's API.
+// with a local mock standing in for PhonePe's API.
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { CONFIG } from "../api/_config.js";
 import { isSlotOpen, addDays, todayKey } from "../public/js/dates.js";
 import { call, hasRedis, startRedis } from "../test-helpers/redis.js";
-import { startRazorpayMock } from "../test-helpers/razorpay.js";
+import { startPhonePeMock } from "../test-helpers/phonepe.js";
 
 const skip = hasRedis ? false : "redis-server not installed";
 const ADMIN = "s3cret-token";
 
-let db, rzp, h;
+let db, pp, h;
 const openSlots = [];
 
 before(async () => {
   if (skip) return;
   db = await startRedis();
-  rzp = await startRazorpayMock();
+  pp = await startPhonePeMock();
   process.env.ADMIN_TOKEN = ADMIN;
   CONFIG.bookingWindowDays = 90; // plenty of distinct slots for the tests below
   h = {};
-  for (const n of ["book", "verify", "webhook", "status", "release", "slots", "admin", "config", "health"]) {
+  for (const n of ["book", "webhook", "status", "release", "slots", "admin", "config", "health"]) {
     h[n] = (await import(`../api/${n}.js`)).default;
   }
   const now = Date.now();
@@ -30,7 +29,7 @@ before(async () => {
     for (const time of CONFIG.timeSlots) if (isSlotOpen(date, time, now, CONFIG)) openSlots.push({ date, time });
   }
 });
-after(() => { db?.stop(); rzp?.stop(); });
+after(() => { db?.stop(); pp?.stop(); });
 
 let slotIdx = 0;
 const nextSlot = () => openSlots[slotIdx++];
@@ -48,18 +47,19 @@ const field = (slot) => `${slot.date}|${slot.time}`;
 const record = async (id) => JSON.parse(await db.cmd(["HGET", "bookings", id]));
 const slotValue = (slot) => db.cmd(["HGET", "slots", field(slot)]);
 const expireHold = (slot, id) => db.cmd(["HSET", "slots", field(slot), `hold:${id}:${Date.now() - 60000}`]);
-const verify = (id, p, headers = freshIp()) =>
-  call(h.verify, { method: "POST", headers, body: { id, razorpay_payment_id: p.paymentId, razorpay_signature: p.signature } });
+const poll = (id, headers = freshIp()) => call(h.status, { query: { id }, headers });
 const admin = (opts = {}) => call(h.admin, { ...opts, headers: { ...freshIp(), authorization: `Bearer ${ADMIN}`, ...opts.headers } });
 const adminPost = (body) => admin({ method: "POST", body });
 const deliver = (hook, headers = {}) =>
-  call(h.webhook, { method: "POST", raw: hook.raw, headers: { "x-razorpay-signature": hook.signature, ...headers } });
+  call(h.webhook, { method: "POST", body: hook.body, headers: { authorization: hook.authorization, ...headers } });
+const quiet = async (fn) => { const orig = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = orig; } };
 
-// A paid-for hold: returns { slot, id, order, p } with a captured payment not yet reported to us.
+// A booking held and then paid for on PhonePe's page (nobody has told our server yet).
 async function heldAndPaid(opts) {
   const slot = nextSlot();
   const { body } = await hold(slot);
-  return { slot, id: body.id, order: body.order, p: rzp.pay(body.order.id, opts) };
+  pp.complete(body.id, opts);
+  return { slot, id: body.id };
 }
 
 // ---------- basics ----------
@@ -70,7 +70,7 @@ test("config exposes the schedule and price but no payment secrets", { skip }, a
   assert.deepEqual(r.body.timeSlots, CONFIG.timeSlots);
   assert.equal(r.body.amount, 899);
   assert.equal(r.body.timezone, "Asia/Kolkata");
-  assert.ok(!JSON.stringify(r.body).match(/secret|rzp_|upi/i));
+  assert.ok(!JSON.stringify(r.body).match(/secret|password|client_id|upi/i));
 });
 
 test("slots: validates the date and reports closed days as empty", { skip }, async () => {
@@ -92,7 +92,7 @@ test("book: rejects bad input with the offending field", { skip }, async () => {
     assert.equal(r.body.field, f);
   }
   assert.equal(await status(s), "open", "failed attempts must not claim the slot");
-  assert.equal(rzp.countCalls("POST /v1/orders"), 0, "no Razorpay order for invalid requests");
+  assert.equal(pp.countCalls("POST /pg/checkout/v2/pay"), 0, "no PhonePe order for invalid requests");
 });
 
 test("book: rejects slots the schedule doesn't offer", { skip }, async () => {
@@ -119,27 +119,27 @@ test("book: honeypot field is rejected", { skip }, async () => {
 
 // ---------- the paid flow ----------
 
-test("book: holds the slot and creates a Razorpay order for ₹899 on the server", { skip }, async () => {
+test("book: holds the slot and creates a PhonePe order for ₹899 on the server", { skip }, async () => {
   const s = nextSlot();
   const r = await hold(s, { amount: 1, amountPaise: 100 }); // client-supplied amounts must be ignored
   assert.equal(r.status, 200);
-  assert.equal(r.body.keyId, "rzp_test_mock");
-  assert.equal(r.body.order.amount, 89900);
-  assert.equal(r.body.order.currency, "INR");
   assert.match(r.body.ref, /^[0-9A-F]{8}$/);
+  assert.equal(r.body.payUrl, `https://pay.phonepe.test/${r.body.id}`);
   assert.equal(await status(s), "held");
 
-  const order = rzp.orders.get(r.body.order.id);
-  assert.equal(order.receipt, r.body.id);
-  assert.equal(order.notes.bookingId, r.body.id);
-  assert.match(order.notes.slot, /IST$/);
+  const order = pp.orders.get(r.body.id);
+  assert.equal(order.amount, 89900);
+  assert.equal(order.expireAfter, CONFIG.holdMinutes * 60);
+  assert.equal(order.returnUrl, `https://mentor.test/?booking=${r.body.id}`, "customer comes back to the booking");
+  assert.equal(order.meta.udf1, r.body.ref);
+  assert.match(order.meta.udf2, /IST$/);
 
   const saved = await record(r.body.id);
   assert.equal(saved.status, "held");
-  assert.equal(saved.orderId, r.body.order.id);
+  assert.equal(saved.orderId, r.body.id);
+  assert.equal(saved.payUrl, r.body.payUrl);
   assert.equal(saved.amountPaise, 89900);
   assert.equal(saved.email.includes("@example.com"), true, "email lower-cased");
-  assert.equal(await db.cmd(["HGET", "orders", r.body.order.id]), r.body.id);
 
   const second = await hold(s);
   assert.equal(second.status, 409);
@@ -148,11 +148,11 @@ test("book: holds the slot and creates a Razorpay order for ₹899 on the server
 
 test("book: concurrent requests for one slot produce one winner and one order", { skip }, async () => {
   const s = nextSlot();
-  const before = rzp.countCalls("POST /v1/orders");
+  const before = pp.countCalls("POST /pg/checkout/v2/pay");
   const results = await Promise.all(Array.from({ length: 10 }, () => hold(s)));
   assert.equal(results.filter((r) => r.status === 200).length, 1);
   assert.equal(results.filter((r) => r.status === 409).length, 9);
-  assert.equal(rzp.countCalls("POST /v1/orders") - before, 1, "losers must not create orders");
+  assert.equal(pp.countCalls("POST /pg/checkout/v2/pay") - before, 1, "losers must not create orders");
 });
 
 test("book: an expired hold can be taken by someone else", { skip }, async () => {
@@ -172,236 +172,162 @@ test("book: slots marked 'true' by the first version stay booked", { skip }, asy
 test("book: rate limits a single visitor", { skip }, async () => {
   const headers = freshIp();
   const limited = [];
-  const real = [nextSlot(), nextSlot(), nextSlot(), nextSlot(), nextSlot(), nextSlot(), nextSlot(), nextSlot()];
+  const real = Array.from({ length: 8 }, nextSlot);
   for (const s of real) limited.push((await hold(s, {}, headers)).status);
   assert.deepEqual(limited.slice(0, 6), [200, 200, 200, 200, 200, 200]);
   assert.deepEqual(limited.slice(6), [429, 429]);
   assert.equal(await status(real[6]), "open", "rate-limited request must not claim a slot");
 });
 
-test("book: if Razorpay is down the hold is released and the visitor gets a 502", { skip }, async () => {
+test("book: if PhonePe is down the hold is released and the visitor gets a 502", { skip }, async () => {
   const s = nextSlot();
-  rzp.failOrders = true;
-  const origError = console.error; console.error = () => {};
+  pp.failPay = true;
   try {
-    const r = await hold(s);
+    const r = await quiet(() => hold(s));
     assert.equal(r.status, 502);
     assert.equal(r.body.error, "payment_unavailable");
-  } finally { rzp.failOrders = false; console.error = origError; }
+  } finally { pp.failPay = false; }
   assert.equal(await status(s), "open");
   assert.equal((await hold(s)).status, 200, "slot is bookable again");
 });
 
-test("book: without Razorpay keys a paid booking is refused before touching the slot", { skip }, async () => {
+test("book: without PhonePe credentials a paid booking is refused before touching the slot", { skip }, async () => {
   const s = nextSlot();
-  const saved = process.env.RAZORPAY_KEY_SECRET;
-  delete process.env.RAZORPAY_KEY_SECRET;
-  const origError = console.error; console.error = () => {};
+  const saved = process.env.PHONEPE_CLIENT_SECRET;
+  delete process.env.PHONEPE_CLIENT_SECRET;
   try {
-    assert.equal((await hold(s)).status, 503);
-  } finally { process.env.RAZORPAY_KEY_SECRET = saved; console.error = origError; }
+    assert.equal((await quiet(() => hold(s))).status, 503);
+  } finally { process.env.PHONEPE_CLIENT_SECRET = saved; }
   assert.equal(await status(s), "open");
 });
 
-test("verify: a genuine payment confirms the booking, and repeating it is harmless", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
-  const r = await verify(id, p);
+test("auth: the access token is reused, refreshed when it stops working, and bad credentials fail safely", { skip }, async () => {
+  await hold(nextSlot()); // make sure a token is cached
+  const issued = pp.tokensIssued;
+  await hold(nextSlot()); await hold(nextSlot());
+  assert.equal(pp.tokensIssued, issued, "token reused across requests");
+
+  pp.expireTokens(); // PhonePe invalidates it early
+  const r = await hold(nextSlot());
+  assert.equal(r.status, 200, "retried once with a fresh token");
+  assert.equal(pp.tokensIssued, issued + 1);
+
+  const s = nextSlot();
+  pp.expireTokens(); pp.failAuth = true;
+  try {
+    assert.equal((await quiet(() => hold(s))).status, 502);
+  } finally { pp.failAuth = false; }
+  assert.equal(await status(s), "open", "hold released when PhonePe won't authenticate us");
+});
+
+// ---------- coming back from PhonePe: the status check ----------
+
+test("status: while PhonePe is still working the booking stays held and says so", { skip }, async () => {
+  const s = nextSlot();
+  const { body } = await hold(s);
+  const r = await poll(body.id);
   assert.equal(r.status, 200);
+  assert.deepEqual([r.body.status, r.body.payment, r.body.ref, r.body.payUrl], ["held", "pending", body.ref, body.payUrl]);
+  assert.ok(r.body.holdExpiresAt > Date.now());
+});
+
+test("status: a paid order confirms the booking, even if the webhook never came", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
+  const r = await poll(id);
   assert.equal(r.body.status, "confirmed");
-  assert.equal(r.body.date, slot.date);
+  assert.equal(r.body.payment, "completed");
+  assert.equal(r.body.payUrl, undefined, "no payment link once paid");
   assert.equal(await status(slot), "booked");
   assert.equal(await slotValue(slot), `booked:${id}`);
   const saved = await record(id);
   assert.equal(saved.status, "confirmed");
-  assert.equal(saved.paymentId, p.paymentId);
-
-  assert.equal((await verify(id, p)).status, 200);
-  assert.equal(rzp.payments.get(p.paymentId).status, "captured", "never refunded");
+  assert.match(saved.paymentId, /^OMO/);
 });
 
-test("verify: rejects forged, mismatched and malformed payments", { skip }, async () => {
-  const { slot, id, order, p } = await heldAndPaid();
-  assert.equal((await verify(id, { ...p, signature: "0".repeat(64) })).body.error, "bad_signature");
-  assert.equal((await verify(id, { ...p, signature: "" })).status, 400);
-  assert.equal((await verify(id, { paymentId: "not-a-payment", signature: p.signature })).status, 400);
-  assert.equal((await call(h.verify, { method: "POST", headers: freshIp(), body: { id: "nope", razorpay_payment_id: p.paymentId, razorpay_signature: p.signature } })).status, 400);
-  assert.equal((await verify(crypto.randomUUID(), p)).status, 404);
-
-  // a genuine payment for ANOTHER booking's order can't confirm this one
-  const other = await heldAndPaid();
-  assert.equal((await verify(id, other.p)).body.error, "bad_signature");
-
-  // right order, wrong amount (e.g. someone pays ₹1 against the order) is refused
-  const cheap = rzp.pay(order.id, { amount: 100 });
-  assert.equal((await verify(id, cheap)).body.error, "payment_mismatch");
-  // a payment that failed at the bank
-  const failed = rzp.pay(order.id, { status: "failed" });
-  assert.equal((await verify(id, failed)).status, 402);
-
-  assert.equal(await status(slot), "held", "none of that may confirm the booking");
-  assert.equal((await record(id)).status, "held");
+test("status: repeating the check is harmless and doesn't bother PhonePe again", { skip }, async () => {
+  const { id } = await heldAndPaid();
+  await poll(id);
+  const calls = pp.countCalls("GET /pg/checkout/v2/order");
+  assert.equal((await poll(id)).body.status, "confirmed");
+  assert.equal(pp.countCalls("GET /pg/checkout/v2/order"), calls);
+  assert.equal(pp.refunds.has(`rf-${id}`), false, "a normal paid booking is never refunded");
 });
 
-test("verify: an authorized-only payment is captured before the booking is confirmed", { skip }, async () => {
-  const { id, p } = await heldAndPaid({ status: "authorized" });
-  assert.equal((await verify(id, p)).status, 200);
-  assert.equal(rzp.payments.get(p.paymentId).status, "captured");
-  assert.ok(rzp.countCalls(`POST /v1/payments/${p.paymentId}/capture`) >= 1);
+test("status: a failed payment leaves the booking held with a link to try again", { skip }, async () => {
+  const s = nextSlot();
+  const { body } = await hold(s);
+  pp.fail(body.id);
+  const r = await poll(body.id);
+  assert.deepEqual([r.body.status, r.body.payment, r.body.payUrl], ["held", "failed", body.payUrl]);
+  assert.equal(await status(s), "held");
+  pp.orders.get(body.id).state = "COMPLETED"; // they retried on PhonePe's page and it worked
+  assert.equal((await poll(body.id)).body.status, "confirmed");
 });
 
-test("verify: paying after the hold lapsed still works if nobody took the slot", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
+test("status: a payment for the wrong amount is never accepted", { skip }, async () => {
+  const { slot, id } = await heldAndPaid({ amount: 100 });
+  const r = await quiet(() => poll(id));
+  assert.equal(r.body.payment, "mismatch");
+  assert.equal(r.body.status, "held");
+  assert.equal(await status(slot), "held");
+});
+
+test("status: bad ids are rejected and PhonePe being unreachable doesn't break the answer", { skip }, async () => {
+  assert.equal((await poll(crypto.randomUUID())).status, 404);
+  assert.equal((await poll("x")).status, 400);
+
+  const { body } = await hold(nextSlot());
+  const saved = process.env.PHONEPE_API_BASE;
+  process.env.PHONEPE_API_BASE = "http://127.0.0.1:1/pg";
+  try {
+    const r = await quiet(() => poll(body.id));
+    assert.deepEqual([r.status, r.body.status, r.body.payment], [200, "held", null]);
+  } finally { process.env.PHONEPE_API_BASE = saved; }
+});
+
+// ---------- late payments ----------
+
+test("late payment: if the hold lapsed but nobody took the slot, the booking is still confirmed", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
   await expireHold(slot, id);
-  assert.equal((await verify(id, p)).status, 200);
+  assert.equal((await poll(id)).body.status, "confirmed");
   assert.equal(await slotValue(slot), `booked:${id}`);
 });
 
-test("verify: paying after the hold lapsed and the slot went elsewhere refunds automatically", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
+test("late payment: if the slot went elsewhere the customer is refunded automatically, once", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
   await expireHold(slot, id);
   const winner = await hold(slot);
   assert.equal(winner.status, 200);
 
-  const r = await verify(id, p);
-  assert.equal(r.status, 409);
-  assert.equal(r.body.error, "slot_taken");
+  const r = await poll(id);
   assert.equal(r.body.status, "refunded");
-  assert.equal(rzp.payments.get(p.paymentId).status, "refunded");
   assert.equal((await record(id)).status, "refunded");
-  assert.equal(await slotValue(slot), `hold:${winner.body.id}:${(await record(winner.body.id)).holdExpiresAt}`, "new holder keeps the slot");
+  const refund = pp.refunds.get(`rf-${id}`);
+  assert.deepEqual([refund.amount, pp.refunds.size > 0], [89900, true]);
+  assert.ok((await slotValue(slot)).startsWith(`hold:${winner.body.id}`), "the new holder keeps the slot");
 
-  assert.equal((await verify(id, p)).status, 409, "repeating it doesn't refund twice");
-  assert.equal(rzp.countCalls(`POST /v1/payments/${p.paymentId}/refund`), 1);
+  const refundsBefore = pp.refunds.size;
+  assert.equal((await poll(id)).body.status, "refunded");
+  assert.equal(pp.refunds.size, refundsBefore, "repeating the check never refunds twice");
 });
 
-test("verify: if the automatic refund fails it is left as refund_due and admin can retry", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
+test("late payment: if the automatic refund fails it is left as refund_due and admin can retry", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
   await expireHold(slot, id);
   const winner = await hold(slot);
-  rzp.failRefunds = true;
-  const origError = console.error; console.error = () => {};
+  pp.failRefunds = true;
   try {
-    const r = await verify(id, p);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.status, "refund_due");
-  } finally { rzp.failRefunds = false; console.error = origError; }
-  assert.equal((await record(id)).status, "refund_due");
+    assert.equal((await quiet(() => poll(id))).body.status, "refund_due");
+  } finally { pp.failRefunds = false; }
 
   const due = await admin({ query: { status: "refund_due" } });
   assert.ok(due.body.bookings.some((b) => b.id === id));
   assert.equal((await adminPost({ id, action: "refund" })).status, 200);
   assert.equal((await record(id)).status, "refunded");
-  assert.equal(rzp.payments.get(p.paymentId).status, "refunded");
+  assert.ok(pp.refunds.has(`rf-${id}`));
   assert.ok((await slotValue(slot)).startsWith(`hold:${winner.body.id}`), "refunding must not free the other person's slot");
 });
-
-test("verify: a second payment against an already-paid order is refunded", { skip }, async () => {
-  const { slot, id, order, p } = await heldAndPaid();
-  assert.equal((await verify(id, p)).status, 200);
-  const again = rzp.pay(order.id);
-  const r = await verify(id, again);
-  assert.equal(r.status, 200);
-  assert.equal(r.body.status, "confirmed");
-  assert.equal(rzp.payments.get(again.paymentId).status, "refunded", "extra payment returned");
-  assert.equal(rzp.payments.get(p.paymentId).status, "captured", "original payment untouched");
-  assert.equal(await slotValue(slot), `booked:${id}`);
-});
-
-// ---------- webhook ----------
-
-test("webhook: confirms a payment the customer never reported back", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
-  const r = await deliver(rzp.webhook("payment.captured", p.paymentId));
-  assert.equal(r.status, 200);
-  assert.equal(r.body.status, "confirmed");
-  assert.equal(await status(slot), "booked");
-  assert.equal((await record(id)).paymentId, p.paymentId);
-
-  // Razorpay retries and also sends order.paid: all harmless
-  assert.equal((await deliver(rzp.webhook("payment.captured", p.paymentId))).body.status, "confirmed");
-  assert.equal((await deliver(rzp.webhook("order.paid", p.paymentId))).body.status, "confirmed");
-  assert.equal((await verify(id, p)).status, 200);
-  assert.equal(rzp.payments.get(p.paymentId).status, "captured");
-});
-
-test("webhook: refuses bad or missing signatures and changes nothing", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
-  const hook = rzp.webhook("payment.captured", p.paymentId);
-  assert.equal((await deliver({ raw: hook.raw, signature: "0".repeat(64) })).status, 400);
-  assert.equal((await deliver({ raw: hook.raw, signature: undefined })).status, 400);
-  assert.equal((await deliver(rzp.webhook("payment.captured", p.paymentId, { secret: "wrong" }))).status, 400);
-  // a tampered body no longer matches its signature
-  assert.equal((await deliver({ raw: hook.raw.replace("captured", "captured "), signature: hook.signature })).status, 400);
-  assert.equal(await status(slot), "held");
-  assert.equal((await record(id)).status, "held");
-});
-
-test("webhook: ignores other events and orders that aren't ours", { skip }, async () => {
-  const { id, p } = await heldAndPaid();
-  const failedHook = rzp.webhook("payment.failed", p.paymentId);
-  assert.equal((await deliver(failedHook)).body.ignored, true);
-
-  rzp.orders.set("order_foreign", { id: "order_foreign", amount: 5000, currency: "INR", notes: {}, status: "created" });
-  const foreign = rzp.pay("order_foreign");
-  assert.equal((await deliver(rzp.webhook("payment.captured", foreign.paymentId))).body.ignored, true);
-  assert.equal((await record(id)).status, "held");
-
-  assert.equal((await call(h.webhook, { method: "GET" })).status, 405);
-});
-
-test("webhook: a payment that belongs to a different order can't confirm a booking", { skip }, async () => {
-  const a = await heldAndPaid(), b = await heldAndPaid();
-  // a (correctly signed) delivery that pairs booking A's order id with booking B's payment
-  const raw = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: b.p.paymentId, order_id: a.order.id } } } });
-  const signature = createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET).update(raw).digest("hex");
-  const r = await deliver({ raw, signature });
-  assert.equal(r.status, 200);
-  assert.equal(r.body.status, "mismatch");
-  assert.equal((await record(a.id)).status, "held");
-  assert.equal(await status(a.slot), "held");
-});
-
-test("webhook: says so when the webhook secret isn't configured", { skip }, async () => {
-  const { p } = await heldAndPaid();
-  const hook = rzp.webhook("payment.captured", p.paymentId);
-  const saved = process.env.RAZORPAY_WEBHOOK_SECRET;
-  delete process.env.RAZORPAY_WEBHOOK_SECRET;
-  const origError = console.error; console.error = () => {};
-  try {
-    assert.equal((await deliver(hook)).status, 503);
-  } finally { process.env.RAZORPAY_WEBHOOK_SECRET = saved; console.error = origError; }
-});
-
-// ---------- status sync ----------
-
-test("status: recovers a paid booking whose customer lost the tab and webhook never arrived", { skip }, async () => {
-  const { slot, id } = await heldAndPaid(); // paid at Razorpay, nobody told us
-  assert.equal((await call(h.status, { query: { id }, headers: freshIp() })).body.status, "confirmed");
-  assert.equal(await status(slot), "booked");
-});
-
-test("status: unpaid holds stay held; bad ids are rejected", { skip }, async () => {
-  const s = nextSlot();
-  const { body } = await hold(s);
-  const r = await call(h.status, { query: { id: body.id }, headers: freshIp() });
-  assert.equal(r.body.status, "held");
-  assert.equal(r.body.ref, body.ref);
-  assert.equal((await call(h.status, { query: { id: crypto.randomUUID() }, headers: freshIp() })).status, 404);
-  assert.equal((await call(h.status, { query: { id: "x" }, headers: freshIp() })).status, 400);
-});
-
-test("status: still answers if Razorpay can't be reached", { skip }, async () => {
-  const s = nextSlot();
-  const { body } = await hold(s);
-  const saved = process.env.RAZORPAY_API_BASE;
-  process.env.RAZORPAY_API_BASE = "http://127.0.0.1:1/v1";
-  const origError = console.error; console.error = () => {};
-  try {
-    assert.equal((await call(h.status, { query: { id: body.id }, headers: freshIp() })).body.status, "held");
-  } finally { process.env.RAZORPAY_API_BASE = saved; console.error = origError; }
-});
-
-// ---------- release ----------
 
 test("release: frees a held slot but never undoes a confirmed booking", { skip }, async () => {
   const a = await heldAndPaid(), b = await heldAndPaid();
@@ -412,7 +338,7 @@ test("release: frees a held slot but never undoes a confirmed booking", { skip }
   const rebooked = await hold(a.slot);
   assert.equal(rebooked.status, 200, "freed slot can be booked again");
 
-  await verify(b.id, b.p);
+  await poll(b.id); // b is paid and confirmed
   assert.equal((await release(b.id)).status, 200);
   assert.equal(await status(b.slot), "booked");
 
@@ -422,10 +348,80 @@ test("release: frees a held slot but never undoes a confirmed booking", { skip }
 });
 
 test("release then pay: a customer who paid after going back is still confirmed if the slot is free", { skip }, async () => {
-  const { slot, id, p } = await heldAndPaid();
+  const { slot, id } = await heldAndPaid();
   await call(h.release, { method: "POST", headers: freshIp(), body: { id } });
-  assert.equal((await verify(id, p)).status, 200);
+  assert.equal((await poll(id)).body.status, "confirmed");
   assert.equal(await slotValue(slot), `booked:${id}`);
+});
+
+// ---------- webhook ----------
+
+test("webhook: confirms a payment the customer never came back from", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
+  const r = await deliver(pp.webhook(id));
+  assert.deepEqual([r.status, r.body.status, r.body.payment], [200, "confirmed", "completed"]);
+  assert.equal(await status(slot), "booked");
+
+  // retries and the customer returning afterwards are all harmless
+  assert.equal((await deliver(pp.webhook(id))).body.status, "confirmed");
+  assert.equal((await poll(id)).body.status, "confirmed");
+  assert.equal(pp.refunds.has(`rf-${id}`), false);
+});
+
+test("webhook: accepts the authorization header as bare hex, upper-case hex, or with a SHA256 prefix", { skip }, async () => {
+  for (const [label, tweak] of [["prefix", { prefix: "SHA256 " }], ["upper", { upper: true }]]) {
+    const { id } = await heldAndPaid();
+    const hook = pp.webhook(id, tweak.prefix ? tweak : {});
+    if (tweak.upper) hook.authorization = hook.authorization.toUpperCase();
+    assert.equal((await deliver(hook)).status, 200, label);
+    assert.equal((await record(id)).status, "confirmed", label);
+  }
+});
+
+test("webhook: refuses wrong or missing credentials and changes nothing", { skip }, async () => {
+  const { slot, id } = await heldAndPaid();
+  assert.equal((await deliver(pp.webhook(id, { pass: "wrong" }))).status, 401);
+  assert.equal((await deliver({ body: pp.webhook(id).body, authorization: undefined })).status, 401);
+  assert.equal((await deliver({ body: pp.webhook(id).body, authorization: "garbage" })).status, 401);
+  assert.equal(await status(slot), "held");
+  assert.equal((await record(id)).status, "held");
+});
+
+test("webhook: even a correctly authenticated body is not believed, PhonePe decides", { skip }, async () => {
+  const s = nextSlot();
+  const { body } = await hold(s); // PhonePe says this order is still PENDING
+  const r = await deliver(pp.webhook(body.id, { state: "COMPLETED" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.payment, "pending");
+  assert.equal(await status(s), "held");
+
+  const failed = await hold(nextSlot());
+  pp.fail(failed.body.id);
+  assert.equal((await deliver(pp.webhook(failed.body.id, { event: "checkout.order.failed", state: "FAILED" }))).body.payment, "failed");
+  assert.equal((await record(failed.body.id)).status, "held");
+});
+
+test("webhook: ignores orders that aren't ours and bodies it doesn't understand", { skip }, async () => {
+  for (const hook of [
+    pp.webhook(crypto.randomUUID()),
+    pp.webhook("someone-elses-order"),
+    { body: {}, authorization: pp.webhook("x").authorization },
+    { body: { event: "pg.refund.completed", payload: { originalMerchantOrderId: crypto.randomUUID() } }, authorization: pp.webhook("x").authorization },
+  ]) {
+    const r = await deliver(hook);
+    assert.deepEqual([r.status, r.body.ignored], [200, true]);
+  }
+  assert.equal((await call(h.webhook, { method: "GET" })).status, 405);
+});
+
+test("webhook: says so when the webhook credentials aren't configured", { skip }, async () => {
+  const { id } = await heldAndPaid();
+  const hook = pp.webhook(id);
+  const saved = process.env.PHONEPE_WEBHOOK_PASSWORD;
+  delete process.env.PHONEPE_WEBHOOK_PASSWORD;
+  try {
+    assert.equal((await quiet(() => deliver(hook))).status, 503);
+  } finally { process.env.PHONEPE_WEBHOOK_PASSWORD = saved; }
 });
 
 // ---------- promo codes ----------
@@ -446,13 +442,13 @@ test("promo: admin creates codes and lists them", { skip }, async () => {
 test("promo: a valid code books the session for ₹0 with no payment step", { skip }, async () => {
   await adminPost({ action: "promo_create", code: "FREE-ONE" });
   const s = nextSlot();
-  const orders = rzp.countCalls("POST /v1/orders");
+  const orders = pp.countCalls("POST /pg/checkout/v2/pay");
   const r = await promoBook(s, "  free-one ", { email: "fresher1@example.com" }); // case and spaces don't matter
   assert.equal(r.status, 200);
   assert.equal(r.body.free, true);
   assert.equal(r.body.status, "confirmed");
-  assert.equal(r.body.order, undefined);
-  assert.equal(rzp.countCalls("POST /v1/orders"), orders, "no Razorpay order for a free booking");
+  assert.equal(r.body.payUrl, undefined);
+  assert.equal(pp.countCalls("POST /pg/checkout/v2/pay"), orders, "no PhonePe order for a free booking");
   assert.equal(await status(s), "booked");
 
   const saved = await record(r.body.id);
@@ -500,15 +496,15 @@ test("promo: a taken slot doesn't use up the code", { skip }, async () => {
   assert.equal((await promoBook(nextSlot(), "KEEP-ME", { email: "x@example.com" })).status, 200, "still redeemable elsewhere");
 });
 
-test("promo: free bookings still validate the form and work without Razorpay keys", { skip }, async () => {
+test("promo: free bookings still validate the form and work without PhonePe credentials", { skip }, async () => {
   await adminPost({ action: "promo_create", code: "NO-KEYS" });
   assert.equal((await promoBook(nextSlot(), "NO-KEYS", { name: "" })).body.field, "name");
 
-  const savedId = process.env.RAZORPAY_KEY_ID;
-  delete process.env.RAZORPAY_KEY_ID;
+  const savedId = process.env.PHONEPE_CLIENT_ID;
+  delete process.env.PHONEPE_CLIENT_ID;
   try {
     assert.equal((await promoBook(nextSlot(), "NO-KEYS", { email: "nokeys@example.com" })).status, 200);
-  } finally { process.env.RAZORPAY_KEY_ID = savedId; }
+  } finally { process.env.PHONEPE_CLIENT_ID = savedId; }
 });
 
 test("promo: guessing codes is rate limited", { skip }, async () => {
@@ -537,33 +533,35 @@ test("admin: disabled without a token; wrong tokens are refused", { skip }, asyn
   assert.equal((await call(h.admin, { headers: { ...freshIp(), authorization: "Bearer wrong" } })).status, 401);
 });
 
-test("admin: lists paid bookings, cancels, and refunds through Razorpay", { skip }, async () => {
+test("admin: lists paid bookings, cancels, and refunds through PhonePe", { skip }, async () => {
   const paid = await heldAndPaid();
-  await verify(paid.id, paid.p);
+  await poll(paid.id);
 
   const list = await admin({ query: { status: "confirmed" } });
   const row = list.body.bookings.find((b) => b.id === paid.id);
-  assert.equal(row.paymentId, paid.p.paymentId);
+  assert.match(row.paymentId, /^OMO/);
   assert.equal(row.email.includes("@example.com"), true);
 
   assert.equal((await adminPost({ id: paid.id, action: "explode" })).status, 400);
   assert.equal((await adminPost({ id: "x", action: "cancel" })).status, 400);
 
-  const refund = await adminPost({ id: paid.id, action: "refund" });
-  assert.equal(refund.status, 200);
-  assert.equal(rzp.payments.get(paid.p.paymentId).status, "refunded");
+  assert.equal((await adminPost({ id: paid.id, action: "refund" })).status, 200);
+  assert.equal(pp.refunds.get(`rf-${paid.id}`).amount, 89900);
   assert.equal((await record(paid.id)).status, "refunded");
   assert.equal(await status(paid.slot), "open", "refund frees the slot");
+  const refunds = pp.refunds.size;
   assert.equal((await adminPost({ id: paid.id, action: "refund" })).status, 200, "refunding twice is safe");
+  assert.equal(pp.refunds.size, refunds, "and never pays out twice");
 
   // cancel (no refund) of another paid booking points out the money is still there
   const other = await heldAndPaid();
-  await verify(other.id, other.p);
+  await poll(other.id);
   const cancel = await adminPost({ id: other.id, action: "cancel" });
   assert.equal(cancel.body.paid, true);
   assert.equal(await status(other.slot), "open");
-  assert.equal(rzp.payments.get(other.p.paymentId).status, "captured");
+  assert.equal(pp.refunds.has(`rf-${other.id}`), false);
   assert.equal((await adminPost({ id: other.id, action: "refund" })).status, 200, "can refund after cancelling");
+  assert.ok(pp.refunds.has(`rf-${other.id}`));
 });
 
 test("admin: hides expired holds unless asked", { skip }, async () => {
@@ -577,18 +575,30 @@ test("admin: hides expired holds unless asked", { skip }, async () => {
 
 // ---------- health and outages ----------
 
-test("health: reports Redis and which Razorpay settings are present", { skip }, async () => {
-  assert.deepEqual((await call(h.health)).body, { ok: true, payments: true, webhook: true });
+test("health: reports Redis, which PhonePe settings are present, and where customers are sent back", { skip }, async () => {
+  assert.deepEqual((await call(h.health)).body, { ok: true, payments: true, webhook: true, siteUrl: "https://mentor.test" });
 
-  const savedUrl = process.env.UPSTASH_REDIS_REST_URL, savedHook = process.env.RAZORPAY_WEBHOOK_SECRET;
+  const savedUrl = process.env.UPSTASH_REDIS_REST_URL, savedPass = process.env.PHONEPE_WEBHOOK_PASSWORD;
   process.env.UPSTASH_REDIS_REST_URL = "http://127.0.0.1:1";
-  delete process.env.RAZORPAY_WEBHOOK_SECRET;
-  const origError = console.error; console.error = () => {};
+  delete process.env.PHONEPE_WEBHOOK_PASSWORD;
   try {
-    const r = await call(h.health);
+    const r = await quiet(() => call(h.health));
     assert.equal(r.status, 503);
-    assert.deepEqual(r.body, { ok: false, payments: true, webhook: false });
-  } finally { console.error = origError; process.env.UPSTASH_REDIS_REST_URL = savedUrl; process.env.RAZORPAY_WEBHOOK_SECRET = savedHook; }
+    assert.deepEqual([r.body.ok, r.body.payments, r.body.webhook], [false, true, false]);
+  } finally { process.env.UPSTASH_REDIS_REST_URL = savedUrl; process.env.PHONEPE_WEBHOOK_PASSWORD = savedPass; }
+});
+
+test("config: PhonePe needs PHONEPE_ENV unless the hosts are overridden", { skip }, async () => {
+  const { paymentsConfigured } = await import("../api/_phonepe.js");
+  const base = process.env.PHONEPE_API_BASE;
+  delete process.env.PHONEPE_API_BASE;
+  try {
+    delete process.env.PHONEPE_ENV;
+    assert.equal(paymentsConfigured(), false, "no environment chosen");
+    process.env.PHONEPE_ENV = "staging";
+    assert.equal(paymentsConfigured(), false, "unknown environment");
+    for (const env of ["sandbox", "production"]) { process.env.PHONEPE_ENV = env; assert.equal(paymentsConfigured(), true, env); }
+  } finally { process.env.PHONEPE_API_BASE = base; delete process.env.PHONEPE_ENV; }
 });
 
 test("redis config: accepts the Vercel integration's KV_REST_API_* names", { skip }, async () => {

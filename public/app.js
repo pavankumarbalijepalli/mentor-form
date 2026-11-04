@@ -3,7 +3,7 @@ import { addDays, dayHasOpenSlot, todayKey } from "/js/dates.js";
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
 
-const STORE_KEY = "mentorBooking:v2";
+const STORE_KEY = "mentorBooking:v3";
 const STORE_MAX_AGE_MS = 24 * 3600 * 1000;
 const DOW = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -16,10 +16,10 @@ const st = {
   view: null,     // { y, m } month shown in the calendar (m is 0-based)
   date: null,     // "YYYY-MM-DD" in the mentor's timezone
   time: null,     // "8:00 AM"
-  hold: null,     // { id, ref, expiresAt, booking, date, time, keyId, order, paid? } once a slot is reserved
+  hold: null,     // { id, ref, expiresAt, booking, date, time, payUrl, leftAt? } once a slot is reserved
   slotReq: 0,     // guards against out-of-order availability responses
   timer: null,
-  checkout: null, // promise for the Razorpay script
+  checking: false, // true while we wait for PhonePe to say whether a payment went through
 };
 
 const form = $("intakeForm");
@@ -102,6 +102,13 @@ async function boot() {
   }
   applyConfig();
   initCalendar();
+
+  // PhonePe sends customers back to /?booking=<id> after they pay (or give up).
+  const returned = new URLSearchParams(location.search).get("booking");
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(returned || "")) {
+    history.replaceState(null, "", location.pathname);
+    return resumeAfterPayment(returned);
+  }
   await restore();
 }
 
@@ -347,7 +354,12 @@ function bookError({ status, data }) {
   }
 }
 
-// ---------- payment ----------
+// ---------- payment (on PhonePe's page) ----------
+
+const POLL_MS = 3000;
+const POLL_TRIES = 20; // about a minute of waiting for PhonePe to finish
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const WA_HELP = (text) => ({ href: waUrl(`PROBLEM: ${text}`), text: "Message me on WhatsApp." });
 
 function startPayment(data, booking) {
   st.hold = {
@@ -357,8 +369,7 @@ function startPayment(data, booking) {
     booking,
     date: st.date,
     time: st.time,
-    keyId: data.keyId,
-    order: data.order,
+    payUrl: data.payUrl,
   };
   persist();
   renderPayment();
@@ -367,34 +378,32 @@ function startPayment(data, booking) {
 
 function renderPayment() {
   const h = st.hold;
-  $("sumName").textContent = h.booking.name;
-  $("sumFocus").textContent = h.booking.focus;
+  $("sumName").textContent = h.booking?.name || "—";
+  $("sumFocus").textContent = h.booking?.focus || "—";
   $("sumSlot").textContent = `${dayLabel(h.date, SHORT_DAY)}, ${nb(h.time)}`;
   $("sumRef").textContent = h.ref;
-  hidePayError();
+  $("payError").hidden = true;
+  $("backBtn").hidden = false;
+  $("checkBtn").hidden = !h.leftAt; // only offered once they've been to PhonePe
   setPayButton();
   startTimer();
-  preloadCheckout();
 }
 
-// Once a payment has been made the button only retries confirming it, so nobody pays twice.
 function setPayButton(busyText) {
   const btn = $("payBtn");
-  const expired = st.hold.expiresAt <= Date.now() && !st.hold.paid;
-  btn.disabled = Boolean(busyText) || expired;
-  btn.textContent = busyText || (st.hold.paid ? "Confirm my payment" : `Pay ₹${cfg.amount}`);
+  const expired = st.hold.expiresAt <= Date.now();
+  btn.disabled = Boolean(busyText) || st.checking || expired || !st.hold.payUrl;
+  btn.textContent = busyText || (st.checking ? "Checking your payment…" : `Pay ₹${cfg.amount}`);
 }
-
-const hidePayError = () => { $("payError").hidden = true; };
 
 function startTimer() {
   clearInterval(st.timer);
   const el = $("holdTimer");
   const tick = () => {
-    if (st.hold.paid) {
-      clearInterval(st.timer);
+    if (!st.hold) return clearInterval(st.timer); // the booking went away (e.g. unknown id): nothing to count down
+    if (st.checking) {
       el.classList.remove("expired");
-      el.textContent = "Payment received. Confirming your booking…";
+      el.textContent = "Checking your payment with PhonePe…";
       return;
     }
     const left = st.hold.expiresAt - Date.now();
@@ -404,111 +413,124 @@ function startTimer() {
     } else {
       clearInterval(st.timer);
       el.classList.add("expired");
-      el.textContent = "Your reservation expired. Go back and pick your slot again.";
-      if ($("payBtn").textContent.startsWith("Pay")) setPayButton();
+      el.textContent = "Your reservation expired. If you've already paid, tap “check my payment”. Otherwise go back and pick your slot again.";
+      setPayButton();
     }
   };
   tick();
   st.timer = setInterval(tick, 1000);
 }
 
-// ---- Razorpay Checkout ----
-
-function loadCheckout() {
-  if (window.Razorpay) return Promise.resolve();
-  st.checkout ||= new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.onload = resolve;
-    script.onerror = () => { st.checkout = null; script.remove(); reject(new Error("checkout.js failed to load")); };
-    document.head.append(script);
-  });
-  return st.checkout;
-}
-const preloadCheckout = () => { loadCheckout().catch(() => {}); };
-
-$("payBtn").addEventListener("click", async () => {
+// Off to PhonePe's hosted page; they bring the customer back to /?booking=<id>.
+$("payBtn").addEventListener("click", () => {
   const h = st.hold;
-  if (!h) return;
-  hidePayError();
-  if (h.paid) return confirmPayment(); // already paid: just retry the confirmation
-
-  setPayButton("Opening secure checkout…");
-  try {
-    await loadCheckout();
-  } catch (err) {
-    console.error(err);
-    showMessage($("payError"), "I couldn't load the payment window. Check your connection and try again.");
-    setPayButton();
-    return;
-  }
-
-  const rzp = new window.Razorpay({
-    key: h.keyId,
-    order_id: h.order.id,
-    amount: h.order.amount,
-    currency: h.order.currency,
-    name: cfg.businessName,
-    description: `1:1 session · ${dayLabel(h.date, SHORT_DAY)}, ${h.time} IST`,
-    prefill: { name: h.booking.name, email: h.booking.email, contact: h.booking.whatsapp },
-    notes: { ref: h.ref },
-    theme: { color: "#1F4E8C" },
-    modal: { ondismiss: () => setPayButton() },
-    handler: (response) => {
-      h.paid = { paymentId: response.razorpay_payment_id, signature: response.razorpay_signature };
-      persist();
-      confirmPayment();
-    },
-  });
-  rzp.on("payment.failed", (response) => {
-    showMessage($("payError"), `${response.error?.description || "The payment didn't go through."} You can try again.`);
-    setPayButton();
-  });
-  rzp.open();
+  if (!h?.payUrl) return;
+  $("payError").hidden = true;
+  h.leftAt = Date.now();
+  persist();
+  setPayButton("Taking you to PhonePe…");
+  window.location.assign(h.payUrl);
 });
 
-// Tell our server the payment happened; it verifies the signature and asks Razorpay itself.
-async function confirmPayment() {
-  const h = st.hold;
-  hidePayError();
-  setPayButton("Confirming your payment…");
-  startTimer();
-  const help = (extra) => ({ href: waUrl(`PROBLEM: ${extra} Payment id: ${h.paid.paymentId}`), text: "Message me on WhatsApp." });
-  try {
-    const r = await api("/api/verify", { id: h.id, razorpay_payment_id: h.paid.paymentId, razorpay_signature: h.paid.signature });
-    if (r.ok) return finishBooked({ ...r.data, ref: h.ref });
+$("checkBtn").addEventListener("click", () => resumeAfterPayment(st.hold.id));
 
-    if (r.status === 409 && r.data.error === "slot_taken") {
-      clearStored();
-      showMessage($("payError"), r.data.status === "refunded"
-        ? "Your payment arrived after your reservation expired, and someone else booked that time. I've refunded you in full (it takes 5 to 7 working days to show up). Please go back and pick another time."
-        : "Your payment arrived after your reservation expired, and someone else booked that time. You'll be refunded in full. If you don't see it in a few days,",
-        r.data.status === "refunded" ? null : help("My payment arrived after my slot expired and I need the refund."));
-      st.hold.paid = null;
-      setPayButton("Slot unavailable");
-      return;
-    }
-    if (r.status === 402) {
-      showMessage($("payError"), "Razorpay hasn't confirmed this payment yet. Wait a moment and tap the button again. Please don't pay twice.");
-    } else if (r.status === 409 || r.status === 404 || r.status === 400) {
-      showMessage($("payError"), "I couldn't match your payment to this booking. Please don't pay again;", help("My payment could not be matched to my booking."));
-    } else {
-      throw new Error(`verify ${r.status}`);
-    }
-  } catch (err) {
-    console.error(err);
-    showMessage($("payError"), "Your payment went through, but I couldn't confirm the booking just now. Please don't pay again. Tap the button to retry, or",
-      help("I paid but the website could not confirm my booking."));
+// Coming back from PhonePe (or tapping "check my payment"): the server asks PhonePe
+// what happened. UPI payments can take a few seconds to settle, so wait a little.
+async function resumeAfterPayment(id) {
+  st.checking = true;
+  if (st.hold?.id !== id) {
+    const stored = readStored();
+    st.hold = stored?.id === id ? stored : null;
   }
+  const outcome = await pollStatus(id);
+  st.checking = false;
+
+  if (outcome.kind === "unknown") {
+    clearInterval(st.timer);
+    clearStored();
+    st.hold = null;
+    show("step1");
+    showMessage($("formError"), "I couldn't find that booking. Please pick a time again.");
+    return;
+  }
+  ensureHold(id, outcome.data);
+  if (outcome.kind === "confirmed") return finishBooked(outcome.data);
+  if (outcome.kind === "failed" && outcome.data.status === "held") {
+    st.hold.expiresAt = outcome.data.holdExpiresAt || st.hold.expiresAt;
+    renderPayment();
+    show("step2");
+    return showMessage($("payError"), "PhonePe says the payment didn't go through, so nothing was charged. You can try again.");
+  }
+
+  // anything else needs a human-readable explanation on the payment screen
+  renderPayment();
+  show("step2");
+  $("backBtn").hidden = outcome.kind === "pending"; // never offer "back" while a payment may be in flight
   setPayButton();
+  const err = $("payError");
+  if (outcome.kind === "pending") {
+    showRetry(err, "PhonePe is still processing your payment. Please don't pay again: it can take a few minutes. If money left your account and you see no confirmation within an hour, message me with your reference.", () => resumeAfterPayment(id));
+    $("checkBtn").hidden = true;
+  } else if (outcome.kind === "refunded") {
+    showMessage(err, "Your payment arrived after your reservation expired, and someone else booked that time. I've refunded you in full (it takes 5 to 7 working days to show up). Please go back and pick another time.");
+  } else if (outcome.kind === "refund_due") {
+    showMessage(err, "Your payment arrived after your reservation expired, and someone else booked that time. You'll be refunded in full. If you don't see it in a few days,", WA_HELP("my payment arrived after my slot expired and I need the refund."));
+  } else {
+    showMessage(err, "I couldn't match your payment to an active booking. Please don't pay again;", WA_HELP("my payment could not be matched to my booking."));
+  }
+  $("payBtn").disabled = true;
+  $("payBtn").textContent = outcome.kind === "pending" ? "Still processing…" : "Slot unavailable";
+}
+
+// Waits (up to about a minute) for a verdict. kind: confirmed | failed | pending | refunded | refund_due | closed | unknown
+async function pollStatus(id) {
+  renderChecking(id);
+  let last = null;
+  for (let i = 0; i < POLL_TRIES; i++) {
+    try {
+      const r = await api(`/api/status?id=${encodeURIComponent(id)}`);
+      if (r.status === 404) return { kind: "unknown" };
+      if (r.ok) {
+        const d = (last = r.data);
+        if (d.status === "confirmed") return { kind: "confirmed", data: d };
+        if (d.status === "refunded" || d.status === "refund_due") return { kind: d.status, data: d };
+        if (d.status === "released" || d.status === "cancelled") return { kind: "closed", data: d };
+        if (d.payment === "failed" || d.payment === "mismatch") return { kind: d.payment === "failed" ? "failed" : "closed", data: d };
+      }
+    } catch { /* offline for a moment: keep trying */ }
+    await sleep(POLL_MS);
+  }
+  return { kind: "pending", data: last || { status: "held" } };
+}
+
+function renderChecking(id) {
+  if (st.hold?.id === id) {
+    renderPayment();
+  } else {
+    st.hold = { id, ref: id.slice(0, 8).toUpperCase(), date: st.date || "1970-01-01", time: "", booking: {}, expiresAt: Date.now() };
+    $("sumName").textContent = $("sumFocus").textContent = $("sumSlot").textContent = "—";
+    $("sumRef").textContent = st.hold.ref;
+    $("payError").hidden = true;
+    $("checkBtn").hidden = true;
+    startTimer();
+  }
+  $("backBtn").hidden = true;
+  setPayButton();
+  show("step2");
+}
+
+// After a return with no saved state (e.g. a different browser), rebuild what we need from the server's answer.
+function ensureHold(id, d) {
+  if (st.hold?.id === id && st.hold.booking?.name !== undefined && st.hold.time) return;
+  st.hold = { ...(st.hold || {}), id, ref: d.ref, date: d.date, time: d.time, booking: st.hold?.booking || {}, payUrl: d.payUrl, expiresAt: d.holdExpiresAt || 0 };
 }
 
 function waUrl(extra) {
-  const h = st.hold;
+  const h = st.hold || {};
   const lines = [
     "Hi! About my 1:1 session booking:", "",
     `Ref: ${h.ref}`,
-    `Name: ${h.booking.name}`,
+    ...(h.booking?.name ? [`Name: ${h.booking.name}`] : []),
     `Slot: ${slotLabel(h.date, h.time)}`,
   ];
   if (extra) lines.push("", extra);
@@ -516,14 +538,16 @@ function waUrl(extra) {
 }
 
 function finishBooked({ ref, date, time }) {
-  const h = st.hold;
   clearInterval(st.timer);
   clearStored();
+  st.checking = false;
+  st.hold = { ...(st.hold || {}), ref: ref || st.hold?.ref, date: date || st.hold?.date, time: time || st.hold?.time };
+  const h = st.hold;
   $("doneLead").textContent = h.free
     ? "Your session is booked, no payment needed. I'll message you on WhatsApp before we meet."
     : "Payment received and your session is booked. I'll message you on WhatsApp before we meet.";
-  $("doneSlot").textContent = `${dayLabel(date || h.date, LONG_DAY)}, ${nb(time || h.time)} IST`;
-  $("doneRef").textContent = ref || h.ref;
+  $("doneSlot").textContent = `${dayLabel(h.date, LONG_DAY)}, ${nb(h.time)} IST`;
+  $("doneRef").textContent = h.ref;
   $("waLink").href = waUrl();
   show("step3");
 }
@@ -540,6 +564,7 @@ $("restartBtn").addEventListener("click", () => {
   $("formError").hidden = true;
   $("slotsWrap").hidden = true;
   $("slotConfirm").hidden = true;
+  clearInterval(st.timer);
   st.date = st.time = st.hold = null;
   initCalendar();
   show("step1");
@@ -551,7 +576,7 @@ function releaseHold() {
   st.hold = null;
   clearInterval(st.timer);
   clearStored();
-  if (h && !h.paid && !h.free) {
+  if (h && !h.free) {
     fetch("/api/release", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: h.id }), keepalive: true,
@@ -559,7 +584,17 @@ function releaseHold() {
   }
 }
 
-// ---------- survive a reload while the customer is in their UPI/bank app ----------
+// Coming back with the browser's Back button can show the page frozen as we left it.
+window.addEventListener("pageshow", (e) => {
+  if (!e.persisted || !st.hold || $("step2").hidden || st.checking) return;
+  setPayButton();
+  if (st.hold.leftAt) {
+    $("checkBtn").hidden = false;
+    showMessage($("payError"), "If you've just paid, tap “check my payment” before paying again.");
+  }
+});
+
+// ---------- survive a reload ----------
 
 function persist() {
   try { sessionStorage.setItem(STORE_KEY, JSON.stringify({ hold: st.hold, savedAt: Date.now() })); } catch { /* storage unavailable */ }
@@ -567,32 +602,36 @@ function persist() {
 function clearStored() {
   try { sessionStorage.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
 }
+function readStored() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STORE_KEY));
+    if (saved?.hold?.id && Date.now() - saved.savedAt <= STORE_MAX_AGE_MS) return saved.hold;
+  } catch { /* none */ }
+  return null;
+}
 
 async function restore() {
-  let saved = null;
-  try { saved = JSON.parse(sessionStorage.getItem(STORE_KEY)); } catch { /* none */ }
-  const h = saved?.hold;
-  if (!h?.id || !h.order || Date.now() - saved.savedAt > STORE_MAX_AGE_MS) return clearStored();
+  const h = readStored();
+  if (!h?.payUrl) return clearStored();
 
   // Ask the server what became of it (it also notices a payment we never heard about).
   let current = null;
   try {
     const r = await api(`/api/status?id=${encodeURIComponent(h.id)}`);
-    if (r.ok) current = r.data.status;
-    else if (r.status === 404) current = "gone";
+    if (r.ok) current = r.data;
+    else if (r.status === 404) current = { status: "gone" };
   } catch { /* offline: fall back to what we remember */ }
 
-  st.hold = h;
-  if (current === "confirmed") return finishBooked({ ref: h.ref, date: h.date, time: h.time });
-  if (current && current !== "held") {
-    st.hold = null;
+  if (current?.status === "confirmed") { st.hold = h; return finishBooked(current); }
+  if (current && current.status !== "held") {
     clearStored();
-    showMessage($("formError"), current === "refunded" || current === "refund_due"
+    showMessage($("formError"), current.status === "refunded" || current.status === "refund_due"
       ? "Your earlier payment couldn't be used because that time was taken. It's being refunded. Please pick another time."
       : "Your earlier reservation is no longer active. Please pick a time again.");
     return;
   }
 
+  st.hold = h;
   st.date = h.date;
   st.time = h.time;
   st.view = { y: Number(h.date.slice(0, 4)), m: Number(h.date.slice(5, 7)) - 1 };
@@ -604,7 +643,12 @@ async function restore() {
   renderCalendar();
   renderPayment();
   show("step2");
-  if (h.paid) confirmPayment(); // they paid but we never got the confirmation through: retry it
+  if (h.leftAt) {
+    // They've been to PhonePe. Don't invite a second payment before they've checked the first.
+    showMessage($("payError"), current?.payment === "failed"
+      ? "PhonePe says your last payment didn't go through, so nothing was charged. You can try again."
+      : "If you've just paid, tap “check my payment” before paying again.");
+  }
 }
 
 boot();

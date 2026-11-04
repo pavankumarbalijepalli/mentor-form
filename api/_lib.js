@@ -7,10 +7,9 @@
 //                         "booked:<id>"              paid for (or free via promo code)
 //                         "true"                     legacy value from the first version
 //   bookings    (hash)  field <id> -> JSON booking record, with `status`:
-//                         held -> confirmed        (paid, or free via promo code)
+//                         held -> confirmed        (paid via PhonePe, or free via promo code)
 //                         released | cancelled     (slot given back)
 //                         refund_due -> refunded   (paid but the slot was gone)
-//   orders      (hash)  Razorpay order id -> booking id (webhook lookup)
 //   promos      (hash)  CODE -> JSON { code, active, uses, maxUses?, expiresAt? }
 //   promo_users (hash)  "CODE|email" -> booking id (one redemption per email)
 //   rl:<scope>:<ip>     rate-limit counters (expire on their own)
@@ -94,22 +93,22 @@ redis.call('HSET', KEYS[4], userKey, ARGV[4])
 return 'ok'
 `;
 
-// Remember which Razorpay order belongs to a still-held booking.
-// KEYS: bookings, orders   ARGV: id, orderId
+// Remember the PhonePe order (and its payment page URL) for a still-held booking.
+// KEYS: bookings   ARGV: id, orderId, payUrl
 const ATTACH_ORDER = `
 local rec = redis.call('HGET', KEYS[1], ARGV[1])
 if not rec then return 0 end
 local b = cjson.decode(rec)
 if b.status ~= 'held' then return 0 end
 b.orderId = ARGV[2]
+b.payUrl = ARGV[3]
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(b))
-redis.call('HSET', KEYS[2], ARGV[2], ARGV[1])
 return 1
 `;
 
-// A verified, captured payment arrives: confirm the booking if its slot is still
-// ours, otherwise mark it refund_due. Safe to run any number of times for the
-// same payment (checkout callback, webhook and status sync can all race).
+// PhonePe reports the order paid: confirm the booking if its slot is still ours,
+// otherwise mark it refund_due. Safe to run any number of times for the same
+// payment (the webhook and the status check can race).
 // KEYS: slots, bookings   ARGV: id, orderId, paymentId, nowMs, iso
 const PAY = `
 local rec = redis.call('HGET', KEYS[2], ARGV[1])
@@ -207,7 +206,7 @@ export function claimFreeSlot({ id, date, time, booking, code, nowMs }) {
   ]);
 }
 
-export const attachOrder = (id, orderId) => evalLua(ATTACH_ORDER, ["bookings", "orders"], [id, orderId]);
+export const attachOrder = (id, orderId, payUrl) => evalLua(ATTACH_ORDER, ["bookings"], [id, orderId, payUrl]);
 
 // -> 'confirmed' | 'refund_due' | 'refunded' | 'cancelled' | 'duplicate' | 'order_mismatch' | 'not_found'
 export const payBooking = (id, orderId, paymentId, nowMs) =>
@@ -220,8 +219,6 @@ export async function getBooking(id) {
   const raw = await redis(["HGET", "bookings", id]);
   return raw ? JSON.parse(raw) : null;
 }
-
-export const bookingIdForOrder = (orderId) => redis(["HGET", "orders", orderId]);
 
 // Returns true once `limit` requests have been made in the window.
 export async function isRateLimited(scope, ip, limit, windowSec) {
@@ -259,7 +256,7 @@ export async function listPromos() {
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const clean = (v) => (typeof v === "string" ? v.replace(CONTROL_CHARS, "").trim() : "");
 
-// Short reference shown to the customer and sent to Razorpay as the order receipt.
+// Short reference shown to the customer and sent to PhonePe in the order's metadata.
 export const refOf = (id) => id.slice(0, 8).toUpperCase();
 
 export const isBookingId = (v) =>

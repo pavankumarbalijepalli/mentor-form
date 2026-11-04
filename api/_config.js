@@ -8,7 +8,7 @@ export const CONFIG = {
   utcOffsetMinutes: 330,
 
   sessionMinutes: 30,
-  // Price in rupees. The Razorpay order is created for this amount on the server;
+  // Price in rupees. The PhonePe order is created for this amount on the server;
   // the browser never sends an amount.
   amount: 899,
   currency: "INR",

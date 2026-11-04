@@ -1,8 +1,8 @@
 // POST /api/book — start a booking.
 // Body: { date, time, name, email, whatsapp, focus, context, promoCode? }
 //
-// Paid:   reserves the slot for CONFIG.holdMinutes and creates a Razorpay order.
-//         -> { success, id, ref, expiresAt, keyId, order: { id, amount, currency } }
+// Paid:   reserves the slot for CONFIG.holdMinutes and creates a PhonePe order.
+//         -> { success, id, ref, expiresAt, payUrl }   (send the customer to payUrl)
 // Promo:  a valid promo code books the slot for free straight away.
 //         -> { success, id, ref, free: true, status: "confirmed", date, time }
 // Errors: 400 invalid_field | invalid_slot | invalid_promo, 409 slot_taken,
@@ -13,7 +13,7 @@ import {
   attachOrder, claimFreeSlot, claimSlot, clientIp, isRateLimited, jsonBody, normalizePromo, refOf,
   requireMethod, send, serverError, transitionBooking, validateBooking,
 } from "./_lib.js";
-import { createOrder, keyId, paymentsConfigured } from "./_razorpay.js";
+import { createPayment, paymentsConfigured, siteUrl } from "./_phonepe.js";
 
 export default async function handler(req, res) {
   if (!requireMethod(req, res, "POST")) return;
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     }
 
     if (!paymentsConfigured()) {
-      console.error("Payment attempt while Razorpay is not configured");
+      console.error("Payment attempt while PhonePe is not configured");
       return send(res, 503, { error: "payment_unavailable" });
     }
 
@@ -56,19 +56,17 @@ export default async function handler(req, res) {
     if (!hold) return send(res, 409, { error: "slot_taken" });
 
     try {
-      const order = await createOrder({
+      const order = await createPayment({
+        merchantOrderId: id,
         amount: amountPaise(),
-        currency: CONFIG.currency,
-        receipt: id,
-        notes: { bookingId: id, ref, slot: `${date} ${time} IST`, name: parsed.value.name, focus: parsed.value.focus },
+        expireAfter: CONFIG.holdMinutes * 60,
+        redirectUrl: `${siteUrl()}/?booking=${id}`, // the customer lands here after paying or giving up
+        meta: { udf1: ref, udf2: `${date} ${time} IST` },
       });
-      if (!(await attachOrder(id, order.id))) throw new Error("could not attach order to booking");
-      return send(res, 200, {
-        success: true, id, ref, expiresAt: hold.expiresAt, keyId: keyId(),
-        order: { id: order.id, amount: order.amount, currency: order.currency },
-      });
+      if (!(await attachOrder(id, id, order.redirectUrl))) throw new Error("could not attach order to booking");
+      return send(res, 200, { success: true, id, ref, expiresAt: hold.expiresAt, payUrl: order.redirectUrl });
     } catch (err) {
-      console.error("Could not create Razorpay order", err);
+      console.error("Could not create PhonePe order", err);
       await transitionBooking(id, "released", ["held"], true, Date.now()).catch((e) => console.error(e));
       return send(res, 502, { error: "payment_unavailable" });
     }

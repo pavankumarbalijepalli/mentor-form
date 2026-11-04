@@ -2,7 +2,7 @@
 //   GET  /api/admin[?status=confirmed][&all=1]   -> { bookings }, newest first
 //   GET  /api/admin?view=promos                  -> { promos }
 //   POST /api/admin { id, action: "cancel" }     free the slot (no refund)
-//   POST /api/admin { id, action: "refund" }     refund the payment through Razorpay and free the slot
+//   POST /api/admin { id, action: "refund" }     refund the payment through PhonePe and free the slot
 //   POST /api/admin { action: "promo_create", code, maxUses?, expires? }   expires = "YYYY-MM-DD" (end of that day, IST)
 //   POST /api/admin { action: "promo_disable", code }
 // Disabled (404) until the ADMIN_TOKEN environment variable is set.
@@ -13,7 +13,7 @@ import {
   clientIp, createPromo, disablePromo, getBooking, isBookingId, isRateLimited, jsonBody, listPromos,
   normalizePromo, redis, send, serverError, transitionBooking,
 } from "./_lib.js";
-import { refundPayment } from "./_razorpay.js";
+import { refundBooking } from "./_pay.js";
 
 function authorized(req) {
   const expected = process.env.ADMIN_TOKEN;
@@ -39,7 +39,7 @@ async function bookingAction(res, id, action, now) {
   const booking = await getBooking(id);
   if (!booking) return send(res, 404, { error: "not_found" });
   if (!booking.paymentId) return send(res, 400, { error: "nothing_to_refund" });
-  await refundPayment(booking.paymentId, { reason: "Refunded by mentor", bookingId: id });
+  await refundBooking(booking);
   const result = await transitionBooking(id, "refunded", ["confirmed", "cancelled", "refund_due", "refunded"], true, now);
   if (result !== "ok") return send(res, 409, { error: result });
   return send(res, 200, { success: true });
