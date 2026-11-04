@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book a 1:1 session — bunnybethinking</title>
+<meta name="description" content="Book a 30-minute 1:1 session on AI/ML careers, interview prep, or a learning path built around where you actually are.">
+<meta name="theme-color" content="#E8EDF2">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Book a 1:1 session — bunnybethinking">
+<meta property="og:description" content="Learning AI doesn't need a fancy background. It needs someone who has been confused in the same places you are.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2310243F'/%3E%3Crect x='8' y='15' width='16' height='9' rx='2' fill='%237E9CC4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@600&family=Lora:ital,wght@1,400&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/styles.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+
+<main class="panel">
+  <div class="blocks" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+  <div class="inner">
+
+    <noscript>
+      <h1 class="heading">Book a 1:1 session</h1>
+      <p>This page needs JavaScript to show the calendar. Please turn it on, or message me on WhatsApp to book.</p>
+    </noscript>
+
+    <!-- STEP 1: DETAILS -->
+    <section id="step1" aria-labelledby="title1">
+      <p class="caption handle">bunnybethinking</p>
+      <h1 id="title1" class="display" tabindex="-1">Book a 1:1 with me</h1>
+      <p class="lead">Learning AI doesn't need a fancy background. It needs someone who has been confused in the same places you are. <span id="leadMinutes">30</span> minutes, just us: AI/ML careers, interview prep, or a learning path built around where you actually are.</p>
+
+      <ul class="tags" aria-label="Session details">
+        <li class="tag"><span id="chipDuration">30</span> min, one session</li>
+        <li class="tag">₹<span id="chipPrice">899</span>, pay online</li>
+        <li class="tag">Times in IST (UTC+5:30)</li>
+        <li class="tag">I reply within 24h</li>
+      </ul>
+
+      <p class="notice" id="loadError" role="alert" hidden></p>
+
+      <p class="caption step-label">Step 1 of 2 · About you</p>
+
+      <form id="intakeForm" novalidate>
+        <div class="field" data-field="name">
+          <label for="name">Full name</label>
+          <input type="text" id="name" name="name" placeholder="e.g. Ananya Rao" autocomplete="name" maxlength="100" required aria-describedby="err-name">
+          <div class="err" id="err-name">Please enter your name.</div>
+        </div>
+
+        <div class="field" data-field="email">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="you@email.com" autocomplete="email" maxlength="254" required aria-describedby="err-email">
+          <div class="err" id="err-email">Please enter a valid email.</div>
+        </div>
+
+        <div class="field" data-field="whatsapp">
+          <label for="whatsapp">WhatsApp number</label>
+          <input type="tel" id="whatsapp" name="whatsapp" placeholder="+91 9XXXXXXXXX" autocomplete="tel" inputmode="tel" maxlength="25" required aria-describedby="hint-whatsapp err-whatsapp">
+          <div class="caption hint" id="hint-whatsapp">Only used to reach you about your session.</div>
+          <div class="err" id="err-whatsapp">Please enter a valid phone number, with country code if you're outside India.</div>
+        </div>
+
+        <fieldset class="field" data-field="focus" aria-describedby="err-focus">
+          <legend>What do you want help with?</legend>
+          <div class="radio-grid" id="focusOptions"></div>
+          <div class="err" id="err-focus">Please pick one.</div>
+        </fieldset>
+
+        <div class="field" data-field="context">
+          <label for="context">Where are you right now? <span class="optional">(optional)</span></label>
+          <textarea id="context" name="context" maxlength="1000" placeholder="Current role, background, what's tripping you up..."></textarea>
+        </div>
+
+        <div class="field" data-field="slot">
+          <label id="slotLabel">Pick a day and time</label>
+          <div class="cal-box" id="calBox">
+            <div class="cal-header">
+              <button type="button" class="cal-nav" id="calPrev" aria-label="Previous month">&lsaquo;</button>
+              <span id="calMonthLabel" aria-live="polite">Month</span>
+              <button type="button" class="cal-nav" id="calNext" aria-label="Next month">&rsaquo;</button>
+            </div>
+            <div class="cal-grid" id="calGrid" role="group" aria-labelledby="slotLabel"></div>
+            <div class="slots-wrap" id="slotsWrap" hidden>
+              <p class="caption slots-label">Times on <b id="slotsDayLabel"></b> (IST)</p>
+              <div class="slot-grid" id="slotGrid" role="group" aria-label="Available times" aria-live="polite"></div>
+            </div>
+            <p class="slot-confirm" id="slotConfirm" hidden>Selected: <b id="slotConfirmText"></b></p>
+          </div>
+          <div class="err" id="err-slot">Please pick a day and a time.</div>
+        </div>
+
+        <div class="field" data-field="promo">
+          <label for="promo">Promo code <span class="optional">(optional)</span></label>
+          <input type="text" id="promo" name="promo" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" aria-describedby="err-promo">
+          <div class="err" id="err-promo">That code isn't valid, has expired, or has already been used.</div>
+        </div>
+
+        <!-- honeypot: leave empty -->
+        <div class="hp" aria-hidden="true">
+          <label for="website">Website</label>
+          <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+        </div>
+
+        <p class="notice" id="formError" role="alert" hidden></p>
+
+        <button type="submit" class="btn btn-primary" id="submitBtn">Continue to payment</button>
+        <p class="caption footer-note">No spam, no newsletter trap. I only use this to schedule your session.</p>
+      </form>
+    </section>
+
+    <!-- STEP 2: PAYMENT -->
+    <section id="step2" aria-labelledby="title2" hidden>
+      <p class="caption handle">bunnybethinking</p>
+      <h1 id="title2" class="heading" tabindex="-1">Pay and lock your slot</h1>
+      <p class="lead">Pay securely with UPI, card or netbanking. Your slot is held while you pay.</p>
+
+      <p class="caption step-label">Step 2 of 2 · Payment</p>
+
+      <div class="hold-timer" id="holdTimer" role="timer"></div>
+
+      <dl class="summary">
+        <div><dt>Name</dt><dd id="sumName">—</dd></div>
+        <div><dt>Focus</dt><dd id="sumFocus">—</dd></div>
+        <div><dt>Slot (IST)</dt><dd id="sumSlot">—</dd></div>
+        <div><dt>Reference</dt><dd class="code" id="sumRef">—</dd></div>
+        <div class="total"><dt>Total due</dt><dd>₹<span id="sumTotal">899</span></dd></div>
+      </dl>
+
+      <p class="notice" id="payError" role="alert" hidden></p>
+
+      <button type="button" class="btn btn-primary" id="payBtn">Pay ₹899</button>
+      <button type="button" class="btn btn-ghost" id="backBtn">Back to my details</button>
+      <p class="caption footer-note">Payments are handled by Razorpay. I never see your card or UPI details.</p>
+    </section>
+
+    <!-- STEP 3: DONE -->
+    <section id="step3" aria-labelledby="title3" hidden>
+      <div class="done">
+        <svg class="mark" viewBox="0 0 56 56" role="img" aria-label="Done">
+          <circle cx="28" cy="28" r="28" class="mark-bg"/>
+          <path d="M16 29l8 8 16-17" class="mark-tick"/>
+        </svg>
+        <h1 id="title3" class="heading" tabindex="-1">You're booked</h1>
+        <p class="lead" id="doneLead"></p>
+        <p class="done-slot" id="doneSlot"></p>
+        <p class="term ref-box">Reference <b id="doneRef"></b></p>
+      </div>
+      <a class="btn btn-primary" id="waLink" href="#" target="_blank" rel="noopener">Message me on WhatsApp</a>
+      <button type="button" class="btn btn-ghost" id="restartBtn">Book another session</button>
+    </section>
+
+  </div>
+</main>
+
+</body>
+</html>

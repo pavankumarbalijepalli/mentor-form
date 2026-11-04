@@ -1,0 +1,31 @@
+/* Sage and Stone — design tokens, copied from the design system's tokens.json.
+   One light theme, no shadows. Change a value in the design system, then here. */
+:root {
+  color-scheme: light;
+
+  /* color */
+  --bg: #E8EDF2;          /* page ground */
+  --surface-alt: #F3F6F9; /* raised panels and cards sitting on --bg */
+  --ink: #10243F;         /* primary text; ground for terminal-style inversions */
+  --ink-muted: #46566E;   /* secondary text, metadata, control borders (6.3:1) */
+  --cobalt: #1F4E8C;      /* primary accent: links, fills, key words */
+  --mist: #7E9CC4;        /* soft accent for fills and tags; ink text on it only */
+  --border: #C3CEDA;      /* hairline dividers. Decorative (1.4:1), never the sole cue for a control */
+
+  /* type */
+  --font-display: "Apple Garamond", "EB Garamond", Garamond, Georgia, serif;
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-serif: Lora, "Source Serif 4", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* spacing */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 40px;
+
+  /* radius */
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+}
